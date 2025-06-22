@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "@fontsource/montserrat": "^5.2.6",
+    "react-scripts": "^5.0.1"
+  }
+}

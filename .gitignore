@@ -35,7 +35,46 @@ Thumbs.db
 *.vec
 *.npy
 *.npz
+models/cache/
+*.pkl
+
+# Node.js
+node_modules/
+npm-debug.log
+yarn-debug.log
+yarn-error.log
+.pnp/
+.pnp.js
+
+# React build
+frontend/build/
+frontend/coverage/
+frontend/.env.local
+frontend/.env.development.local
+frontend/.env.test.local
+frontend/.env.production.local
+
+# Environment variables
+.env
+.env.local
+.env.development
+.env.test
+.env.production
 
 # Logs
 logs/
-*.log 
+*.log
+
+# Temporary files
+tmp/
+temp/
+.temp/
+
+# Ollama
+ollama/
+
+# Project specific
+results/*.csv
+results/*.json
+!results/topic_evaluation_results.csv
+!results/topic_results.csv 
