@@ -21,7 +21,10 @@ This application uses AI to analyze meeting transcripts and automatically extrac
 - **Decisions**: Formal agreements and resolutions reached during the meeting
 - **Action Items**: Tasks assigned to team members with deadlines
 
-The system uses local LLMs through Ollama for privacy and performance, with a robust rule-based extraction system as fallback.
+The system supports multiple AI backends:
+- Local LLMs through Ollama for privacy and performance
+- OpenAI API for higher quality results (requires API key)
+- Rule-based extraction as fallback when AI is unavailable
 
 <div align="center">
   <img src="results/meeting_dataset_analysis.png" alt="Meeting Analysis Example" width="700px">
@@ -29,13 +32,16 @@ The system uses local LLMs through Ollama for privacy and performance, with a ro
 
 ## ✨ Features
 
-- **AI-Powered Analysis**: Uses Ollama LLMs (Mistral, Llama, Phi, etc.) for high-quality extraction
+- **Multiple AI Options**: 
+  - Local processing with Ollama models (Mistral, Llama, Phi, etc.)
+  - Cloud processing with OpenAI API (GPT-3.5, GPT-4)
+  - Rule-based fallback extraction
 - **React Frontend**: Modern, responsive UI with dark mode support
 - **FastAPI Backend**: High-performance API for real-time transcript analysis
 - **Multi-model Support**: Choose from multiple LLM models based on your needs
 - **Caching System**: Reuse analysis results for similar content to improve performance
+- **Cache Management**: Clear cached results via UI or API
 - **Email Integration**: Share meeting summaries with participants via email
-- **Fallback Extraction**: Rule-based extraction when LLM is unavailable or times out
 - **Topic Modeling**: Identify key themes and topics across meetings
 - **Sentiment Analysis**: Track emotional tone throughout meetings
 
@@ -45,7 +51,8 @@ The system uses local LLMs through Ollama for privacy and performance, with a ro
 
 - Python 3.8+ 
 - Node.js 14+ and npm
-- [Ollama](https://ollama.com/download) for local LLM processing
+- [Ollama](https://ollama.com/download) for local LLM processing (optional)
+- OpenAI API key (optional)
 
 ### Installation
 
@@ -60,7 +67,9 @@ The system uses local LLMs through Ollama for privacy and performance, with a ro
    pip install -r requirements.txt
    ```
 
-3. **Install and set up Ollama**:
+3. **Set up AI backend** (choose one or both):
+   
+   **Option 1: Local LLMs with Ollama**
    ```bash
    # For macOS/Linux
    curl -fsSL https://ollama.com/install.sh | sh
@@ -71,6 +80,13 @@ The system uses local LLMs through Ollama for privacy and performance, with a ro
    # Pull required models
    ollama pull mistral  # Default model (4.8GB RAM)
    ollama pull phi      # Alternative smaller model
+   ```
+   
+   **Option 2: OpenAI API**
+   
+   Create a `.env` file in the project root with your OpenAI API key:
+   ```
+   OPENAI_API_KEY=your_api_key_here
    ```
 
 4. **Install frontend dependencies**:
@@ -104,13 +120,18 @@ The system uses local LLMs through Ollama for privacy and performance, with a ro
 3. **Analyze**: Click "Analyze Transcript" to process the meeting
 4. **View results**: See the extracted summary, decisions, and action items
 5. **Share**: Email the results to meeting participants if needed
+6. **Manage cache**: Clear cached results using the "Clear Cache" button in settings
 
 ### Command Line Usage
 
 Process meeting transcripts directly from the command line:
 
 ```bash
+# Using Ollama
 python scripts/extract_meeting_info.py --input data/chunked_transcripts.csv --output results/meeting_extractions.csv --model mistral
+
+# Using OpenAI API
+python scripts/extract_meeting_info.py --input data/chunked_transcripts.csv --output results/meeting_extractions.csv --llm_type openai --api_url https://api.openai.com/v1/chat/completions --api_key your_api_key_here
 ```
 
 Run the example script to test the API:
@@ -131,7 +152,11 @@ PORT=8000
 HOST=0.0.0.0
 LOG_LEVEL=info
 
-# Email configuration
+# OpenAI API (optional)
+OPENAI_API_KEY=your_api_key_here
+OPENAI_API_URL=https://api.openai.com/v1/chat/completions
+
+# Email configuration (optional)
 SMTP_SERVER=smtp.gmail.com
 SMTP_PORT=587
 SMTP_USERNAME=your-email@gmail.com
@@ -141,7 +166,7 @@ EMAIL_FROM=your-email@gmail.com
 
 ### Model Selection
 
-The application supports various Ollama models:
+#### Ollama Models (Local)
 
 | Model | RAM Required | Speed | Quality |
 |-------|-------------|-------|---------|
@@ -149,6 +174,21 @@ The application supports various Ollama models:
 | llama3.2 | ~8GB | Slow | Very High |
 | phi | ~3GB | Fast | Medium |
 | gemma | ~4GB | Medium | Medium |
+
+#### OpenAI Models (Cloud)
+
+| Model | Cost | Speed | Quality |
+|-------|------|-------|---------|
+| gpt-3.5-turbo | $ | Fast | Very High |
+| gpt-4 | $$$ | Medium | Exceptional |
+
+### Cache Management
+
+The application caches analysis results to improve performance when processing similar transcripts. You can manage the cache in several ways:
+
+1. **UI Button**: Click the settings gear icon, then use the "Clear Cache" button
+2. **API Endpoint**: Send a DELETE request to `http://localhost:8000/cache`
+3. **Command Line**: Run `Remove-Item -Path "models\cache\*" -Force` (PowerShell) or `rm models/cache/*` (Linux/macOS)
 
 ## 🏗️ Technical Architecture
 
@@ -160,16 +200,18 @@ The application consists of several components:
    - Results display with formatted sections
    - Dark mode support
    - Email sharing functionality
+   - Cache management
 
 2. **Backend API (FastAPI)**:
    - RESTful API for transcript analysis
+   - Multiple AI backend support (Ollama, OpenAI)
    - Model management and caching
    - Email service integration
    - Health monitoring endpoints
 
 3. **AI Processing Pipeline**:
    - Transcript chunking for large documents
-   - LLM processing with Ollama
+   - LLM processing with Ollama or OpenAI
    - Rule-based fallback extraction
    - Response parsing and formatting
 
@@ -259,6 +301,19 @@ Send meeting analysis results via email:
 }
 ```
 
+#### `DELETE /cache`
+
+Clear all cached analysis results:
+
+Response:
+```json
+{
+  "success": true,
+  "message": "Successfully cleared 42 cache files",
+  "timestamp": 1689432156.789
+}
+```
+
 #### `GET /models`
 
 List available Ollama models.
@@ -285,6 +340,11 @@ Check API and Ollama health status.
    - Ensure Ollama is running: `ollama list`
    - Pull the required model: `ollama pull mistral`
 
+4. **OpenAI API Issues**:
+   - Check your API key is correct
+   - Verify you have sufficient API credits
+   - Check your network connection
+
 ## 🤝 Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
@@ -302,6 +362,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## 🙏 Acknowledgements
 
 - [Ollama](https://ollama.com/) for local LLM processing
+- [OpenAI](https://openai.com/) for cloud AI APIs
 - [FastAPI](https://fastapi.tiangolo.com/) for the API framework
 - [React](https://reactjs.org/) for the frontend framework
 - [Material-UI](https://mui.com/) for UI components

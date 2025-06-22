@@ -1,6 +1,7 @@
 import requests
 import json
 import argparse
+import os
 
 # API endpoints
 API_URL = "http://localhost:8000/analyze"
@@ -24,14 +25,20 @@ CEO: Great. So we've decided to prioritize search improvements and mobile respon
 """
 
 # API request
-def analyze_transcript(text, model="mistral"):
+def analyze_transcript(text, model="mistral", llm_type="ollama", api_key=None):
     """Send transcript to API for analysis"""
     payload = {
         "text": text,
-        "model": model,
         "max_chunk_size": 1500,
-        "use_cache": True
+        "use_cache": True,
+        "llm_type": llm_type,
+        "model": model
     }
+    
+    # Add OpenAI API details if needed
+    if llm_type == "openai":
+        payload["api_url"] = "https://api.openai.com/v1/chat/completions"
+        payload["api_key"] = api_key
     
     try:
         response = requests.post(API_URL, json=payload)
@@ -77,6 +84,19 @@ def send_email(email_address, analysis_result):
         print(f"Error sending email: {e}")
         return False
 
+# Clear cache
+def clear_cache():
+    """Clear all cached analysis results"""
+    try:
+        response = requests.delete("http://localhost:8000/cache")
+        response.raise_for_status()
+        result = response.json()
+        print(f"Cache cleared: {result.get('message')}")
+        return True
+    except requests.exceptions.RequestException as e:
+        print(f"Error clearing cache: {e}")
+        return False
+
 # Check if API is running
 def check_api_health():
     """Check if the API is running"""
@@ -117,6 +137,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Meeting Transcript Analyzer Example")
     parser.add_argument("--email", type=str, help="Email address to send results to")
     parser.add_argument("--model", type=str, default="mistral", help="Model to use for analysis")
+    parser.add_argument("--llm-type", type=str, default="ollama", choices=["ollama", "openai", "rule-based"], 
+                        help="LLM type to use (ollama, openai, rule-based)")
+    parser.add_argument("--openai-key", type=str, help="OpenAI API key (required if using openai)")
+    parser.add_argument("--clear-cache", action="store_true", help="Clear the analysis cache before running")
     args = parser.parse_args()
     
     print("Meeting Transcript Analyzer Example")
@@ -127,11 +151,25 @@ if __name__ == "__main__":
         print("Please start the API server first with 'python api.py'")
         exit(1)
     
-    # List available models
-    list_models()
+    # List available models if using Ollama
+    if args.llm_type == "ollama":
+        list_models()
     
-    print("\nAnalyzing transcript...")
-    result = analyze_transcript(transcript, model=args.model)
+    # Check OpenAI API key if needed
+    if args.llm_type == "openai" and not args.openai_key:
+        # Try to get from environment variable
+        api_key = os.environ.get("OPENAI_API_KEY")
+        if not api_key:
+            print("Error: OpenAI API key is required when using OpenAI. Use --openai-key or set OPENAI_API_KEY environment variable.")
+            exit(1)
+        args.openai_key = api_key
+    
+    # Clear cache if requested
+    if args.clear_cache:
+        clear_cache()
+    
+    print(f"\nAnalyzing transcript using {args.llm_type} ({args.model})...")
+    result = analyze_transcript(transcript, model=args.model, llm_type=args.llm_type, api_key=args.openai_key)
     
     if result:
         print("\nAnalysis Results:")
@@ -165,6 +203,9 @@ if __name__ == "__main__":
         print("Failed to analyze transcript")
         
     print("\nUsage examples:")
-    print("  python example_api_usage.py                          # Just analyze the transcript")
+    print("  python example_api_usage.py                          # Just analyze the transcript with Ollama/Mistral")
     print("  python example_api_usage.py --email user@example.com # Analyze and email results")
-    print("  python example_api_usage.py --model llama3.2         # Use a different model") 
+    print("  python example_api_usage.py --model phi              # Use a different Ollama model")
+    print("  python example_api_usage.py --llm-type openai --openai-key sk-... --model gpt-3.5-turbo  # Use OpenAI API")
+    print("  python example_api_usage.py --llm-type rule-based    # Use rule-based extraction (no AI)")
+    print("  python example_api_usage.py --clear-cache            # Clear the cache before analyzing") 

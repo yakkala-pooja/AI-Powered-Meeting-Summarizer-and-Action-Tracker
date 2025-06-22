@@ -589,20 +589,18 @@ def process_with_ollama(transcript: str, model: str = "mistral") -> str:
 
 1. SUMMARY: Create a coherent 3-5 sentence summary of the ENTIRE transcript that captures the main topics discussed. This should be a unified summary, not disconnected points.
 
-2. DECISIONS: List ONLY formal decisions that were actually made during the meeting, including:
-   - Votes taken and their results
-   - Motions passed or rejected
-   - Formal agreements reached by the group
-   - Policies officially adopted
+2. DECISIONS: List ALL formal decisions made during the meeting, including:
+   - Approvals granted
+   - Motions passed
+   - Agreements reached by the group
+   - Policies adopted
 
-3. ACTION ITEMS: List specific tasks assigned during the meeting as a TO-DO list, including:
-   - WHO is responsible (always include a specific name or role)
+3. ACTION ITEMS: List ALL tasks assigned during the meeting as a TO-DO list, including:
+   - WHO is responsible
    - WHAT specific task they need to do
    - WHEN it needs to be completed (if mentioned)
-   
-   Also include:
-   - Scheduled meetings with specific dates/times (if no specific date/time is mentioned, don't include it)
-   - Documents requiring approval with specific deadlines (if no specific deadline is mentioned, don't include it)
+   - Include any scheduled meetings with dates/times
+   - Include any documents requiring approval
 
 Transcript: {transcript}
 
@@ -612,16 +610,15 @@ Format your response using EXACTLY this structure with clear section separation:
 A coherent paragraph summarizing the entire transcript in 3-5 sentences.
 
 ## DECISIONS
-- [Specific decision that was formally made]
-- [Additional decisions as needed]
+- Decision 1
+- Decision 2
 (If no clear decisions were made, write only "- None identified")
 
 ## ACTION ITEMS
-- [Person Name/Role]: [Specific task] by [deadline if mentioned]
-- Scheduled: [Meeting details] on [specific date] at [specific time]
-- Approval needed: [Document/item] by [specific deadline]
+- [Person Name]: [Specific task] by [deadline if mentioned]
+- Scheduled: [Meeting details] on [date] at [time]
+- Approval needed: [Document/item] by [deadline]
 (If no action items were identified, write only "- None identified")
-(Do NOT include action items without a specific person/role responsible)
 """
     else:
         prompt = f"""You are an expert meeting analyst who extracts key information from meeting transcripts with precision and clarity. Analyze the following meeting transcript and extract exactly these three elements:

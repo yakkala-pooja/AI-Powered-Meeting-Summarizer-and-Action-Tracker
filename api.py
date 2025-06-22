@@ -72,6 +72,9 @@ class TranscriptRequest(BaseModel):
     model: str = Field(default="mistral", description="Ollama model to use (e.g., mistral, llama3.2)")
     max_chunk_size: int = Field(default=1500, description="Maximum number of characters per chunk")
     use_cache: bool = Field(default=True, description="Whether to use caching for responses")
+    llm_type: str = Field(default="ollama", description="LLM type to use (ollama, openai, lmstudio, rule-based)")
+    api_url: Optional[str] = Field(default=None, description="API URL for OpenAI-compatible APIs")
+    api_key: Optional[str] = Field(default=None, description="API key for OpenAI-compatible APIs")
 
 class MeetingItem(BaseModel):
     summary: List[str] = Field(default_factory=list, description="List of summary points")
@@ -338,9 +341,14 @@ async def analyze_transcript(request: TranscriptRequest):
     if not request.text or not request.text.strip():
         raise HTTPException(status_code=400, detail="Transcript text cannot be empty")
     
+    # Get LLM type and model
+    llm_type = request.llm_type
+    model = request.model
+    
     # Check cache if enabled
     if request.use_cache:
-        cache_key = get_cache_key(request.text, request.model)
+        # Include LLM type in cache key to differentiate between backends
+        cache_key = get_cache_key(f"{request.text}:{llm_type}", model)
         cached_result = load_from_cache(cache_key)
         if cached_result:
             logger.info(f"Using cached result for {cache_key}")
@@ -350,7 +358,7 @@ async def analyze_transcript(request: TranscriptRequest):
                 message="Analysis completed (cached)",
                 results=cached_result["results"],
                 processing_time=processing_time,
-                model_used=request.model,
+                model_used=f"{llm_type}:{model}",
                 fallback_used=cached_result["fallback_used"]
             )
     
@@ -365,10 +373,32 @@ async def analyze_transcript(request: TranscriptRequest):
     # Process in parallel for multiple chunks
     if len(chunks) > 1:
         with ThreadPoolExecutor(max_workers=min(len(chunks), 4)) as executor:
-            futures = [executor.submit(process_transcript_chunk, chunk, request.model) for chunk in chunks]
+            futures = []
+            for chunk in chunks:
+                if llm_type == "ollama":
+                    futures.append(executor.submit(process_with_ollama, chunk, model))
+                elif llm_type == "openai":
+                    futures.append(executor.submit(process_with_openai_compatible, chunk, request.api_url, request.api_key, request.model))
+                elif llm_type == "lmstudio":
+                    futures.append(executor.submit(process_with_lmstudio, chunk, request.api_url))
+                else:  # rule-based
+                    futures.append(executor.submit(extract_meeting_info, chunk))
+            
             for future in futures:
                 try:
-                    result = future.result()
+                    if llm_type == "rule-based":
+                        # For rule-based, we get the parsed result directly
+                        parsed = future.result()
+                        result = {
+                            "parsed": parsed,
+                            "fallback_used": True,
+                            "raw_response": None
+                        }
+                    else:
+                        # For LLM-based, we get the response and parse it
+                        response = future.result()
+                        result = process_transcript_chunk_response(response, chunk, llm_type)
+                    
                     results.append(result)
                     if result["fallback_used"]:
                         fallback_used = True
@@ -378,9 +408,36 @@ async def analyze_transcript(request: TranscriptRequest):
                     fallback_used = True
     else:
         # Process single chunk directly
-        result = process_transcript_chunk(chunks[0], request.model)
-        results.append(result)
-        fallback_used = result["fallback_used"]
+        try:
+            if llm_type == "ollama":
+                response = process_with_ollama(chunks[0], model)
+                result = process_transcript_chunk_response(response, chunks[0], llm_type)
+            elif llm_type == "openai":
+                response = process_with_openai_compatible(chunks[0], request.api_url, request.api_key, request.model)
+                result = process_transcript_chunk_response(response, chunks[0], llm_type)
+            elif llm_type == "lmstudio":
+                response = process_with_lmstudio(chunks[0], request.api_url)
+                result = process_transcript_chunk_response(response, chunks[0], llm_type)
+            else:  # rule-based
+                parsed = extract_meeting_info(chunks[0])
+                result = {
+                    "parsed": parsed,
+                    "fallback_used": True,
+                    "raw_response": None
+                }
+            
+            results.append(result)
+            fallback_used = result["fallback_used"]
+        except Exception as e:
+            logger.error(f"Error processing chunk: {e}")
+            # If processing fails, use rule-based extraction as fallback
+            parsed = extract_meeting_info(chunks[0])
+            results.append({
+                "parsed": parsed,
+                "fallback_used": True,
+                "raw_response": None
+            })
+            fallback_used = True
     
     # Merge results from all chunks
     merged = merge_results(results)
@@ -400,6 +457,7 @@ async def analyze_transcript(request: TranscriptRequest):
             "results": meeting_item,
             "fallback_used": merged["fallback_used"]
         }
+        cache_key = get_cache_key(f"{request.text}:{llm_type}", model)
         save_to_cache(cache_key, cache_data)
     
     return TranscriptResponse(
@@ -407,9 +465,28 @@ async def analyze_transcript(request: TranscriptRequest):
         message="Analysis completed successfully" if not fallback_used else "Analysis completed with fallback extraction",
         results=meeting_item,
         processing_time=processing_time,
-        model_used=request.model,
+        model_used=f"{llm_type}:{model}",
         fallback_used=merged["fallback_used"]
     )
+
+def process_transcript_chunk_response(response: str, chunk: str, llm_type: str) -> Dict[str, Any]:
+    """Helper function to process a response from an LLM."""
+    try:
+        # Parse the response
+        parse_response.current_transcript = chunk  # Store for fallback
+        parsed = parse_response(response)
+        fallback_used = False
+    except Exception as e:
+        logger.error(f"Error processing with {llm_type}: {e}")
+        # Fallback to rule-based extraction
+        parsed = extract_meeting_info(chunk)
+        fallback_used = True
+    
+    return {
+        "parsed": parsed,
+        "fallback_used": fallback_used,
+        "raw_response": response if 'response' in locals() else None
+    }
 
 @app.post("/send-email")
 async def send_email(request: EmailRequest, background_tasks: BackgroundTasks):
@@ -475,6 +552,187 @@ async def clear_cache():
     except Exception as e:
         logger.error(f"Error clearing cache: {e}")
         raise HTTPException(status_code=500, detail=f"Error clearing cache: {str(e)}")
+
+def process_with_ollama(text: str, model: str) -> str:
+    """Process a chunk of text with Ollama API."""
+    try:
+        # Adjust timeout for phi model which takes longer
+        timeout = 180 if model == "phi" else 60
+        
+        # Prepare the prompt
+        prompt = f"""
+        You are an AI assistant that extracts information from meeting transcripts.
+        Analyze the following meeting transcript and extract:
+        1. A concise summary of the meeting (key points discussed)
+        2. All decisions made during the meeting
+        3. All action items/tasks assigned during the meeting, including who is responsible and any deadlines
+
+        Format your response as follows:
+        ```json
+        {{
+            "summary": ["point 1", "point 2", ...],
+            "decisions": ["decision 1", "decision 2", ...],
+            "action_items": ["action item 1", "action item 2", ...]
+        }}
+        ```
+
+        If there are no decisions or action items, use an empty array [].
+        Be concise and focus only on extracting the requested information.
+        
+        TRANSCRIPT:
+        {text}
+        """
+        
+        # Call Ollama API
+        response = requests.post(
+            "http://localhost:11434/api/generate",
+            json={"model": model, "prompt": prompt, "stream": False},
+            timeout=timeout
+        )
+        
+        if response.status_code != 200:
+            logger.error(f"Ollama API error: {response.status_code} - {response.text}")
+            raise Exception(f"Ollama API error: {response.status_code}")
+        
+        result = response.json()
+        return result.get("response", "")
+    except Exception as e:
+        logger.error(f"Error calling Ollama API: {e}")
+        raise
+
+def process_with_openai_compatible(text: str, api_url: str, api_key: str, model: str = "gpt-3.5-turbo") -> str:
+    """Process a chunk of text with OpenAI API or compatible endpoints."""
+    try:
+        # Use default OpenAI URL if not provided
+        if not api_url:
+            api_url = "https://api.openai.com/v1/chat/completions"
+        
+        # Prepare the prompt
+        system_message = """
+        You are an AI assistant that extracts information from meeting transcripts.
+        Analyze the meeting transcript and extract:
+        1. A concise summary of the meeting (key points discussed)
+        2. All decisions made during the meeting
+        3. All action items/tasks assigned during the meeting, including who is responsible and any deadlines
+        
+        Format your response as follows:
+        ```json
+        {
+            "summary": ["point 1", "point 2", ...],
+            "decisions": ["decision 1", "decision 2", ...],
+            "action_items": ["action item 1", "action item 2", ...]
+        }
+        ```
+        
+        If there are no decisions or action items, use an empty array [].
+        Be concise and focus only on extracting the requested information.
+        """
+        
+        user_message = f"TRANSCRIPT:\n{text}"
+        
+        # Prepare request payload
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_message},
+                {"role": "user", "content": user_message}
+            ],
+            "temperature": 0.3,
+            "max_tokens": 1000
+        }
+        
+        # Set headers with API key
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}"
+        }
+        
+        # Call OpenAI API
+        response = requests.post(
+            api_url,
+            headers=headers,
+            json=payload,
+            timeout=60  # 60 second timeout
+        )
+        
+        if response.status_code != 200:
+            logger.error(f"OpenAI API error: {response.status_code} - {response.text}")
+            raise Exception(f"OpenAI API error: {response.status_code}")
+        
+        result = response.json()
+        # Extract content from the response
+        if "choices" in result and len(result["choices"]) > 0:
+            if "message" in result["choices"][0] and "content" in result["choices"][0]["message"]:
+                return result["choices"][0]["message"]["content"]
+        
+        logger.error(f"Unexpected OpenAI API response format: {result}")
+        raise Exception("Unexpected OpenAI API response format")
+    except Exception as e:
+        logger.error(f"Error calling OpenAI API: {e}")
+        raise
+
+def process_with_lmstudio(text: str, api_url: str) -> str:
+    """Process a chunk of text with LM Studio API."""
+    try:
+        # Use default URL if not provided
+        if not api_url:
+            api_url = "http://localhost:1234/v1/chat/completions"
+        
+        # Prepare the prompt
+        system_message = """
+        You are an AI assistant that extracts information from meeting transcripts.
+        Analyze the meeting transcript and extract:
+        1. A concise summary of the meeting (key points discussed)
+        2. All decisions made during the meeting
+        3. All action items/tasks assigned during the meeting, including who is responsible and any deadlines
+        
+        Format your response as follows:
+        ```json
+        {
+            "summary": ["point 1", "point 2", ...],
+            "decisions": ["decision 1", "decision 2", ...],
+            "action_items": ["action item 1", "action item 2", ...]
+        }
+        ```
+        
+        If there are no decisions or action items, use an empty array [].
+        Be concise and focus only on extracting the requested information.
+        """
+        
+        user_message = f"TRANSCRIPT:\n{text}"
+        
+        # Prepare request payload
+        payload = {
+            "messages": [
+                {"role": "system", "content": system_message},
+                {"role": "user", "content": user_message}
+            ],
+            "temperature": 0.3,
+            "max_tokens": 1000
+        }
+        
+        # Call LM Studio API
+        response = requests.post(
+            api_url,
+            json=payload,
+            timeout=60  # 60 second timeout
+        )
+        
+        if response.status_code != 200:
+            logger.error(f"LM Studio API error: {response.status_code} - {response.text}")
+            raise Exception(f"LM Studio API error: {response.status_code}")
+        
+        result = response.json()
+        # Extract content from the response (same format as OpenAI)
+        if "choices" in result and len(result["choices"]) > 0:
+            if "message" in result["choices"][0] and "content" in result["choices"][0]["message"]:
+                return result["choices"][0]["message"]["content"]
+        
+        logger.error(f"Unexpected LM Studio API response format: {result}")
+        raise Exception("Unexpected LM Studio API response format")
+    except Exception as e:
+        logger.error(f"Error calling LM Studio API: {e}")
+        raise
 
 if __name__ == "__main__":
     uvicorn.run("api:app", host="0.0.0.0", port=8000, reload=True)

@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { 
   Box, Button, Container, Typography, Paper, CircularProgress, 
   FormControl, InputLabel, MenuItem, Select, Snackbar, Alert, TextField, IconButton,
-  Tooltip, useTheme, alpha, Divider
+  Tooltip, useTheme, alpha, Divider, FormControlLabel, Switch
 } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
@@ -10,6 +10,8 @@ import SummarizeIcon from '@mui/icons-material/Summarize';
 import SettingsIcon from '@mui/icons-material/Settings';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import DeleteSweepIcon from '@mui/icons-material/DeleteSweep';
+import CloudIcon from '@mui/icons-material/Cloud';
+import ComputerIcon from '@mui/icons-material/Computer';
 import ThemeToggle from './ThemeToggle';
 
 const TranscriptAnalyzer = () => {
@@ -21,7 +23,10 @@ const TranscriptAnalyzer = () => {
   const [fileContent, setFileContent] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isCacheClearing, setIsCacheClearing] = useState(false);
+  const [modelType, setModelType] = useState('local'); // 'local' or 'openai'
   const [model, setModel] = useState('mistral');
+  const [openaiApiKey, setOpenaiApiKey] = useState('');
+  const [openaiModel, setOpenaiModel] = useState('gpt-3.5-turbo');
   const [error, setError] = useState('');
   const [showNotification, setShowNotification] = useState(false);
   const [notificationMessage, setNotificationMessage] = useState('');
@@ -55,30 +60,47 @@ const TranscriptAnalyzer = () => {
       return;
     }
 
+    if (modelType === 'openai' && !openaiApiKey) {
+      showAlert('Please enter an OpenAI API key', 'error');
+      return;
+    }
+
     setIsLoading(true);
     setError('');
     
     // Show longer processing time message for phi model
-    if (model === 'phi') {
+    if (model === 'phi' && modelType === 'local') {
       showAlert('Using phi model - this may take longer to process', 'info');
     }
 
     try {
       // Set longer timeout for phi model
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), model === 'phi' ? 300000 : 120000); // 5 min for phi, 2 min for others
+      const timeoutId = setTimeout(() => controller.abort(), 
+        modelType === 'openai' ? 120000 : (model === 'phi' ? 300000 : 120000)); // 2 min for OpenAI, 5 min for phi, 2 min for others
+      
+      // Prepare request body based on model type
+      let requestBody = {
+        text: fileContent,
+        max_chunk_size: 1500,
+        use_cache: true
+      };
+      
+      if (modelType === 'local') {
+        requestBody.model = model;
+      } else if (modelType === 'openai') {
+        requestBody.llm_type = 'openai';
+        requestBody.api_url = 'https://api.openai.com/v1/chat/completions';
+        requestBody.api_key = openaiApiKey;
+        requestBody.model = openaiModel;
+      }
       
       const response = await fetch('http://localhost:8000/analyze', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          text: fileContent,
-          model: model,
-          max_chunk_size: 1500,
-          use_cache: true
-        }),
+        body: JSON.stringify(requestBody),
         signal: controller.signal
       });
       
@@ -250,31 +272,90 @@ const TranscriptAnalyzer = () => {
               border: '1px solid',
               borderColor: alpha(theme.palette.divider, 0.1)
             }}>
-              <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600 }}>
-                Model Settings
+              <Typography variant="subtitle2" sx={{ mb: 2, fontWeight: 600 }}>
+                AI Model Settings
               </Typography>
-              <FormControl fullWidth size="small">
-                <InputLabel id="model-select-label">Model</InputLabel>
-                <Select
-                  labelId="model-select-label"
-                  id="model-select"
-                  value={model}
-                  label="Model"
-                  onChange={(e) => setModel(e.target.value)}
-                  sx={{ borderRadius: 2 }}
+              
+              <Box sx={{ display: 'flex', gap: 2, mb: 2 }}>
+                <Button 
+                  variant={modelType === 'local' ? 'contained' : 'outlined'}
+                  size="small"
+                  startIcon={<ComputerIcon />}
+                  onClick={() => setModelType('local')}
+                  sx={{ borderRadius: 2, flex: 1 }}
                 >
-                  <MenuItem value="mistral">Mistral</MenuItem>
-                  <MenuItem value="llama3.2">Llama 3.2</MenuItem>
-                  <MenuItem value="gemma">Gemma</MenuItem>
-                  <MenuItem value="phi">Phi</MenuItem>
-                </Select>
-              </FormControl>
-              <Box sx={{ display: 'flex', alignItems: 'center', mt: 1 }}>
-                <InfoOutlinedIcon sx={{ fontSize: 16, mr: 0.5, color: 'text.secondary' }} />
-                <Typography variant="caption" color="text.secondary">
-                  Mistral requires ~4.8GB RAM, Llama 3.2 requires ~8GB RAM, Phi may take longer to process
-                </Typography>
+                  Local (Ollama)
+                </Button>
+                <Button 
+                  variant={modelType === 'openai' ? 'contained' : 'outlined'}
+                  size="small"
+                  startIcon={<CloudIcon />}
+                  onClick={() => setModelType('openai')}
+                  sx={{ borderRadius: 2, flex: 1 }}
+                >
+                  OpenAI API
+                </Button>
               </Box>
+              
+              {modelType === 'local' ? (
+                <>
+                  <FormControl fullWidth size="small" sx={{ mb: 1 }}>
+                    <InputLabel id="model-select-label">Local Model</InputLabel>
+                    <Select
+                      labelId="model-select-label"
+                      id="model-select"
+                      value={model}
+                      label="Local Model"
+                      onChange={(e) => setModel(e.target.value)}
+                      sx={{ borderRadius: 2 }}
+                    >
+                      <MenuItem value="mistral">Mistral</MenuItem>
+                      <MenuItem value="llama3.2">Llama 3.2</MenuItem>
+                      <MenuItem value="gemma">Gemma</MenuItem>
+                      <MenuItem value="phi">Phi</MenuItem>
+                    </Select>
+                  </FormControl>
+                  <Box sx={{ display: 'flex', alignItems: 'center', mt: 1 }}>
+                    <InfoOutlinedIcon sx={{ fontSize: 16, mr: 0.5, color: 'text.secondary' }} />
+                    <Typography variant="caption" color="text.secondary">
+                      Mistral requires ~4.8GB RAM, Llama 3.2 requires ~8GB RAM, Phi may take longer to process
+                    </Typography>
+                  </Box>
+                </>
+              ) : (
+                <>
+                  <TextField
+                    label="OpenAI API Key"
+                    type="password"
+                    size="small"
+                    fullWidth
+                    value={openaiApiKey}
+                    onChange={(e) => setOpenaiApiKey(e.target.value)}
+                    placeholder="sk-..."
+                    sx={{ mb: 2, borderRadius: 2 }}
+                  />
+                  <FormControl fullWidth size="small" sx={{ mb: 1 }}>
+                    <InputLabel id="openai-model-select-label">OpenAI Model</InputLabel>
+                    <Select
+                      labelId="openai-model-select-label"
+                      id="openai-model-select"
+                      value={openaiModel}
+                      label="OpenAI Model"
+                      onChange={(e) => setOpenaiModel(e.target.value)}
+                      sx={{ borderRadius: 2 }}
+                    >
+                      <MenuItem value="gpt-3.5-turbo">GPT-3.5 Turbo</MenuItem>
+                      <MenuItem value="gpt-4">GPT-4</MenuItem>
+                    </Select>
+                  </FormControl>
+                  <Box sx={{ display: 'flex', alignItems: 'center', mt: 1 }}>
+                    <InfoOutlinedIcon sx={{ fontSize: 16, mr: 0.5, color: 'text.secondary' }} />
+                    <Typography variant="caption" color="text.secondary">
+                      GPT-3.5 is faster and cheaper, GPT-4 provides higher quality results
+                    </Typography>
+                  </Box>
+                </>
+              )}
               
               <Divider sx={{ my: 2 }} />
               
