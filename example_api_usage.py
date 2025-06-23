@@ -25,14 +25,15 @@ CEO: Great. So we've decided to prioritize search improvements and mobile respon
 """
 
 # API request
-def analyze_transcript(text, model="mistral", llm_type="ollama", api_key=None):
+def analyze_transcript(text, model="mistral", llm_type="ollama", api_key=None, disable_chunking=False):
     """Send transcript to API for analysis"""
     payload = {
         "text": text,
         "max_chunk_size": 1500,
         "use_cache": True,
         "llm_type": llm_type,
-        "model": model
+        "model": model,
+        "disable_chunking": disable_chunking
     }
     
     # Add OpenAI API details if needed
@@ -141,6 +142,7 @@ if __name__ == "__main__":
                         help="LLM type to use (ollama, openai, rule-based)")
     parser.add_argument("--openai-key", type=str, help="OpenAI API key (required if using openai)")
     parser.add_argument("--clear-cache", action="store_true", help="Clear the analysis cache before running")
+    parser.add_argument("--disable-chunking", action="store_true", help="Process the entire transcript as a single chunk")
     args = parser.parse_args()
     
     print("Meeting Transcript Analyzer Example")
@@ -169,7 +171,9 @@ if __name__ == "__main__":
         clear_cache()
     
     print(f"\nAnalyzing transcript using {args.llm_type} ({args.model})...")
-    result = analyze_transcript(transcript, model=args.model, llm_type=args.llm_type, api_key=args.openai_key)
+    if args.disable_chunking:
+        print("Processing entire transcript as a single chunk (chunking disabled)")
+    result = analyze_transcript(transcript, model=args.model, llm_type=args.llm_type, api_key=args.openai_key, disable_chunking=args.disable_chunking)
     
     if result:
         print("\nAnalysis Results:")
@@ -208,4 +212,5 @@ if __name__ == "__main__":
     print("  python example_api_usage.py --model phi              # Use a different Ollama model")
     print("  python example_api_usage.py --llm-type openai --openai-key sk-... --model gpt-3.5-turbo  # Use OpenAI API")
     print("  python example_api_usage.py --llm-type rule-based    # Use rule-based extraction (no AI)")
-    print("  python example_api_usage.py --clear-cache            # Clear the cache before analyzing") 
+    print("  python example_api_usage.py --clear-cache            # Clear the cache before analyzing")
+    print("  python example_api_usage.py --disable-chunking       # Process entire transcript as a single chunk") 

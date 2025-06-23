@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { 
   Box, Button, Container, Typography, Paper, CircularProgress, 
   FormControl, InputLabel, MenuItem, Select, Snackbar, Alert, TextField, IconButton,
-  Tooltip, useTheme, alpha, Divider, FormControlLabel, Switch
+  Tooltip, useTheme, alpha, Divider, FormControlLabel, Switch, Slider
 } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
@@ -32,6 +32,7 @@ const TranscriptAnalyzer = () => {
   const [notificationMessage, setNotificationMessage] = useState('');
   const [notificationType, setNotificationType] = useState('info');
   const [showSettings, setShowSettings] = useState(false);
+  const [disableChunking, setDisableChunking] = useState(true);
 
   // Handle file upload
   const handleFileUpload = (event) => {
@@ -71,19 +72,22 @@ const TranscriptAnalyzer = () => {
     // Show longer processing time message for phi model
     if (model === 'phi' && modelType === 'local') {
       showAlert('Using phi model - this may take longer to process', 'info');
+    } else {
+      showAlert('Processing transcript - this may take a few minutes for large documents', 'info');
     }
 
     try {
-      // Set longer timeout for phi model
+      // Set longer timeout for all models
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 
-        modelType === 'openai' ? 120000 : (model === 'phi' ? 300000 : 120000)); // 2 min for OpenAI, 5 min for phi, 2 min for others
+        modelType === 'openai' ? 180000 : (model === 'phi' ? 600000 : 300000)); // 3 min for OpenAI, 10 min for phi, 5 min for others
       
       // Prepare request body based on model type
       let requestBody = {
         text: fileContent,
         max_chunk_size: 1500,
-        use_cache: true
+        use_cache: true,
+        disable_chunking: disableChunking
       };
       
       if (modelType === 'local') {
@@ -107,7 +111,11 @@ const TranscriptAnalyzer = () => {
       clearTimeout(timeoutId);
 
       if (!response.ok) {
-        throw new Error(`HTTP error! Status: ${response.status}`);
+        if (response.status === 500) {
+          throw new Error(`Server error. This might be due to Ollama not running or a timeout. Please check that Ollama is running and try again.`);
+        } else {
+          throw new Error(`HTTP error! Status: ${response.status}`);
+        }
       }
 
       const data = await response.json();
@@ -116,8 +124,13 @@ const TranscriptAnalyzer = () => {
       // Navigate to results page with the data
       navigate('/results', { state: { results: data } });
     } catch (err) {
-      setError(err.message);
-      showAlert(`Error: ${err.message}`, 'error');
+      if (err.name === 'AbortError') {
+        setError('Request timed out. This might be due to the transcript being too long or the model being overloaded. Try using a different model or breaking your transcript into smaller parts.');
+        showAlert(`Error: Request timed out. Try a different model or smaller transcript.`, 'error');
+      } else {
+        setError(err.message);
+        showAlert(`Error: ${err.message}`, 'error');
+      }
     } finally {
       setIsLoading(false);
     }
@@ -316,10 +329,24 @@ const TranscriptAnalyzer = () => {
                     </Select>
                   </FormControl>
                   <Box sx={{ display: 'flex', alignItems: 'center', mt: 1 }}>
-                    <InfoOutlinedIcon sx={{ fontSize: 16, mr: 0.5, color: 'text.secondary' }} />
-                    <Typography variant="caption" color="text.secondary">
-                      Mistral requires ~4.8GB RAM, Llama 3.2 requires ~8GB RAM, Phi may take longer to process
-                    </Typography>
+                    <Tooltip title={
+                      <React.Fragment>
+                        <Typography variant="body2" sx={{ fontWeight: 'bold', mb: 1 }}>Available Models:</Typography>
+                        <Typography variant="body2">• Mistral: Good balance of speed and quality (4.8GB)</Typography>
+                        <Typography variant="body2">• Llama 3.2: Best quality results (8GB)</Typography>
+                        <Typography variant="body2">• Gemma: Lightweight option (4GB)</Typography>
+                        <Typography variant="body2">• Phi: Smallest model, slower processing (2.5GB)</Typography>
+                        <Divider sx={{ my: 1 }} />
+                        <Typography variant="caption">
+                          Models must be downloaded in Ollama first with:<br/>
+                          <code>ollama pull modelname</code>
+                        </Typography>
+                      </React.Fragment>
+                    } placement="bottom-start" arrow>
+                      <IconButton size="small" sx={{ p: 0.5 }}>
+                        <InfoOutlinedIcon fontSize="small" sx={{ fontSize: 16, color: 'text.secondary' }} />
+                      </IconButton>
+                    </Tooltip>
                   </Box>
                 </>
               ) : (
@@ -349,13 +376,66 @@ const TranscriptAnalyzer = () => {
                     </Select>
                   </FormControl>
                   <Box sx={{ display: 'flex', alignItems: 'center', mt: 1 }}>
-                    <InfoOutlinedIcon sx={{ fontSize: 16, mr: 0.5, color: 'text.secondary' }} />
-                    <Typography variant="caption" color="text.secondary">
-                      GPT-3.5 is faster and cheaper, GPT-4 provides higher quality results
-                    </Typography>
+                    <Tooltip title={
+                      <React.Fragment>
+                        <Typography variant="body2" sx={{ fontWeight: 'bold', mb: 1 }}>OpenAI Models:</Typography>
+                        <Typography variant="body2">• GPT-3.5 Turbo: Faster and cheaper</Typography>
+                        <Typography variant="body2">• GPT-4: Higher quality results but more expensive</Typography>
+                        <Divider sx={{ my: 1 }} />
+                        <Typography variant="caption">
+                          Requires a valid OpenAI API key with available credits
+                        </Typography>
+                      </React.Fragment>
+                    } placement="bottom-start" arrow>
+                      <IconButton size="small" sx={{ p: 0.5 }}>
+                        <InfoOutlinedIcon fontSize="small" sx={{ fontSize: 16, color: 'text.secondary' }} />
+                      </IconButton>
+                    </Tooltip>
                   </Box>
                 </>
               )}
+              
+              <Divider sx={{ my: 2 }} />
+              
+              <Box sx={{ mb: 2 }}>
+                <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1 }}>
+                  Processing Options
+                </Typography>
+                <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                  <FormControlLabel
+                    control={
+                      <Switch 
+                        checked={!disableChunking}
+                        onChange={(e) => setDisableChunking(!e.target.checked)}
+                        size="small"
+                      />
+                    }
+                    label={
+                      <Box>
+                        <Typography variant="body2">Document Processing</Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {disableChunking ? "Single document mode (recommended)" : "Chunking enabled for large documents"}
+                        </Typography>
+                      </Box>
+                    }
+                  />
+                  <Tooltip title={
+                    <React.Fragment>
+                      <Typography variant="body2" sx={{ fontWeight: 'bold', mb: 1 }}>Document Processing Options:</Typography>
+                      <Typography variant="body2">• Single document mode: Processes the entire transcript at once for more coherent results (recommended)</Typography>
+                      <Typography variant="body2">• Chunking: Breaks large documents into smaller pieces to avoid memory issues</Typography>
+                      <Divider sx={{ my: 1 }} />
+                      <Typography variant="caption">
+                        Only enable chunking for very large transcripts (10+ pages) or if you experience memory errors
+                      </Typography>
+                    </React.Fragment>
+                  } placement="bottom-start" arrow>
+                    <IconButton size="small" sx={{ p: 0.5 }}>
+                      <InfoOutlinedIcon fontSize="small" sx={{ fontSize: 16, color: 'text.secondary' }} />
+                    </IconButton>
+                  </Tooltip>
+                </Box>
+              </Box>
               
               <Divider sx={{ my: 2 }} />
               

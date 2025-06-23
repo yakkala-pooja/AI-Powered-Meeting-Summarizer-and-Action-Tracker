@@ -4,7 +4,7 @@
 
 ![Meeting Summarizer Logo](frontend/public/logo192.png)
 
-**Extract valuable insights from meeting transcripts using AI**
+**Transform Meeting Transcripts into Actionable Intelligence**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
@@ -13,18 +13,17 @@
 
 </div>
 
-## 📋 Overview
+## 🔍 Project Overview
 
-This application uses AI to analyze meeting transcripts and automatically extract key information:
+In today's fast-paced work environment, meetings consume a significant portion of our professional lives, yet their outputs often vanish into digital oblivion. The AI-Powered Meeting Summarizer and Action Tracker bridges this gap by transforming raw meeting transcripts into structured, actionable intelligence.
 
-- **Meeting Summaries**: Concise overviews of the main discussion points
-- **Decisions**: Formal agreements and resolutions reached during the meeting
-- **Action Items**: Tasks assigned to team members with deadlines
+This application leverages the power of Large Language Models (LLMs) to analyze meeting transcripts and automatically extract three critical components:
 
-The system supports multiple AI backends:
-- Local LLMs through Ollama for privacy and performance
-- OpenAI API for higher quality results (requires API key)
-- Rule-based extraction as fallback when AI is unavailable
+- **📋 Meeting Summaries**: Concise overviews that capture the essence of discussions
+- **🤝 Decisions**: Clear record of agreements, votes, and conclusions reached
+- **✅ Action Items**: Explicit tasks with ownership and deadlines
+
+What makes this tool unique is its flexibility in AI processing. You can run it completely locally using Ollama for privacy-sensitive content, leverage cloud-based models like GPT for enhanced accuracy, or fall back to rule-based extraction when AI services are unavailable.
 
 <div align="center">
   <img src="results/meeting_dataset_analysis.png" alt="Meeting Analysis Example" width="700px">
@@ -32,18 +31,15 @@ The system supports multiple AI backends:
 
 ## ✨ Features
 
-- **Multiple AI Options**: 
+- **🧠 Multiple AI Options**: 
   - Local processing with Ollama models (Mistral, Llama, Phi, etc.)
   - Cloud processing with OpenAI API (GPT-3.5, GPT-4)
   - Rule-based fallback extraction
-- **React Frontend**: Modern, responsive UI with dark mode support
-- **FastAPI Backend**: High-performance API for real-time transcript analysis
-- **Multi-model Support**: Choose from multiple LLM models based on your needs
-- **Caching System**: Reuse analysis results for similar content to improve performance
-- **Cache Management**: Clear cached results via UI or API
-- **Email Integration**: Share meeting summaries with participants via email
-- **Topic Modeling**: Identify key themes and topics across meetings
-- **Sentiment Analysis**: Track emotional tone throughout meetings
+- **💻 Modern UI**: Responsive React frontend with dark mode support
+- **⚡ High Performance**: FastAPI backend with caching for rapid analysis
+- **🔄 Flexible Processing**: Process entire documents or chunk large transcripts
+- **📊 Advanced Analysis**: Topic modeling and sentiment analysis capabilities
+- **📧 Sharing**: Email integration to distribute meeting insights
 
 ## 🚀 Getting Started
 
@@ -78,8 +74,9 @@ The system supports multiple AI backends:
    # Download from https://ollama.com/download and follow installation instructions
    
    # Pull required models
-   ollama pull mistral  # Default model (4.8GB RAM)
-   ollama pull phi      # Alternative smaller model
+   ollama pull llama3.2  # Best quality results (8GB RAM)
+   ollama pull mistral   # Good balance (4.8GB RAM)
+   ollama pull phi       # Lightweight option (3GB RAM)
    ```
    
    **Option 2: OpenAI API**
@@ -120,115 +117,44 @@ The system supports multiple AI backends:
 3. **Analyze**: Click "Analyze Transcript" to process the meeting
 4. **View results**: See the extracted summary, decisions, and action items
 5. **Share**: Email the results to meeting participants if needed
-6. **Manage cache**: Clear cached results using the "Clear Cache" button in settings
 
 ### Command Line Usage
 
 Process meeting transcripts directly from the command line:
 
 ```bash
-# Using Ollama
-python scripts/extract_meeting_info.py --input data/chunked_transcripts.csv --output results/meeting_extractions.csv --model mistral
+# Using Ollama with default settings (single document mode)
+python scripts/extract_meeting_info.py --input data/chunked_transcripts.csv --output results/meeting_extractions.csv --model llama3.2
 
-# Using OpenAI API
-python scripts/extract_meeting_info.py --input data/chunked_transcripts.csv --output results/meeting_extractions.csv --llm_type openai --api_url https://api.openai.com/v1/chat/completions --api_key your_api_key_here
-```
-
-Run the example script to test the API:
-
-```bash
-python example_api_usage.py --model phi
+# Enable chunking for very large documents
+python scripts/extract_meeting_info.py --input data/chunked_transcripts.csv --output results/meeting_extractions.csv --model mistral --use_chunking
 ```
 
 ## 🔧 Configuration
 
-### API Configuration
-
-The API can be configured through environment variables or a `.env` file:
-
-```
-# API settings
-PORT=8000
-HOST=0.0.0.0
-LOG_LEVEL=info
-
-# OpenAI API (optional)
-OPENAI_API_KEY=your_api_key_here
-OPENAI_API_URL=https://api.openai.com/v1/chat/completions
-
-# Email configuration (optional)
-SMTP_SERVER=smtp.gmail.com
-SMTP_PORT=587
-SMTP_USERNAME=your-email@gmail.com
-SMTP_PASSWORD=your-app-password
-EMAIL_FROM=your-email@gmail.com
-```
-
-### Model Selection
+### Model Selection Guide
 
 #### Ollama Models (Local)
 
-| Model | RAM Required | Speed | Quality |
-|-------|-------------|-------|---------|
-| mistral | ~4.8GB | Medium | High |
-| llama3.2 | ~8GB | Slow | Very High |
-| phi | ~3GB | Fast | Medium |
-| gemma | ~4GB | Medium | Medium |
+| Model | RAM Required | Speed | Quality | Best For |
+|-------|-------------|-------|---------|----------|
+| llama3.2 | ~8GB | Slower | Excellent | Detailed analysis of complex meetings |
+| mistral | ~4.8GB | Medium | Very Good | General purpose meeting analysis |
+| phi | ~3GB | Fast | Good | Quick analysis of shorter meetings |
+| gemma | ~4GB | Medium | Good | Balanced option for most meetings |
 
 #### OpenAI Models (Cloud)
 
-| Model | Cost | Speed | Quality |
-|-------|------|-------|---------|
-| gpt-3.5-turbo | $ | Fast | Very High |
-| gpt-4 | $$$ | Medium | Exceptional |
-
-### Cache Management
-
-The application caches analysis results to improve performance when processing similar transcripts. You can manage the cache in several ways:
-
-1. **UI Button**: Click the settings gear icon, then use the "Clear Cache" button
-2. **API Endpoint**: Send a DELETE request to `http://localhost:8000/cache`
-3. **Command Line**: Run `Remove-Item -Path "models\cache\*" -Force` (PowerShell) or `rm models/cache/*` (Linux/macOS)
-
-## 🏗️ Technical Architecture
-
-The application consists of several components:
-
-1. **Frontend (React)**:
-   - Modern UI built with React and Material-UI
-   - File upload and transcript visualization
-   - Results display with formatted sections
-   - Dark mode support
-   - Email sharing functionality
-   - Cache management
-
-2. **Backend API (FastAPI)**:
-   - RESTful API for transcript analysis
-   - Multiple AI backend support (Ollama, OpenAI)
-   - Model management and caching
-   - Email service integration
-   - Health monitoring endpoints
-
-3. **AI Processing Pipeline**:
-   - Transcript chunking for large documents
-   - LLM processing with Ollama or OpenAI
-   - Rule-based fallback extraction
-   - Response parsing and formatting
-
-4. **Analysis Modules**:
-   - Topic modeling with embeddings
-   - Sentiment analysis
-   - Meeting statistics generation
-
-<div align="center">
-  <img src="results/topic_evaluation_metrics.png" alt="Topic Evaluation Metrics" width="600px">
-</div>
+| Model | Cost | Speed | Quality | Best For |
+|-------|------|-------|---------|----------|
+| gpt-3.5-turbo | $ | Fast | Very High | Regular meeting analysis |
+| gpt-4 | $$$ | Medium | Exceptional | Critical meetings with complex content |
 
 ## 📊 Analysis Capabilities
 
 ### Meeting Summary Extraction
 
-The system identifies the most important points discussed in the meeting, focusing on substantive content rather than procedural remarks.
+The system identifies the most important points discussed in the meeting, focusing on substantive content rather than procedural remarks. It creates a coherent paragraph that captures the essence of the discussion.
 
 ### Decision Extraction
 
@@ -241,129 +167,61 @@ The system recognizes various types of decisions:
 ### Action Item Extraction
 
 The system identifies tasks that need to be completed, including:
-- Assigned responsibilities
+- Assigned responsibilities (who is accountable)
 - Deadlines and timeframes
 - Required approvals
 - Scheduled follow-ups
 
-## 📝 API Documentation
+## 🧩 Interesting Technical Challenges
 
-### Endpoints
+### 1. Balancing Precision and Recall in Action Item Detection
 
-#### `POST /analyze`
+One of the most fascinating challenges in this project was finding the right balance between precision and recall when identifying action items. Too strict, and we'd miss subtle task assignments; too loose, and regular statements would be misclassified as tasks.
 
-Analyze a meeting transcript:
+Our solution involved a multi-layered approach:
+- Pattern matching for explicit markers ("to-do", "action item", "next steps")
+- Named entity recognition to identify person-task relationships
+- Contextual analysis of imperative verbs and future tense statements
+- Deadline and temporal expression detection
 
-```json
-{
-  "text": "Your meeting transcript text here...",
-  "model": "mistral",
-  "max_chunk_size": 1500,
-  "use_cache": true
-}
-```
+### 2. Handling Malformed LLM Responses
 
-Response:
+Large Language Models occasionally produce malformed JSON or nested structures that break standard parsers. We implemented a robust response handling system that:
+- Detects and repairs common JSON formatting issues
+- Handles nested JSON objects by flattening them
+- Provides multiple fallback parsing strategies
+- Gracefully degrades to rule-based extraction when necessary
 
-```json
-{
-  "success": true,
-  "message": "Analysis completed successfully",
-  "results": {
-    "summary": ["Summary point 1", "Summary point 2"],
-    "decisions": ["Decision 1", "Decision 2"],
-    "action_items": ["Person A: Task to complete by Friday"]
-  },
-  "processing_time": 1.25,
-  "model_used": "mistral",
-  "fallback_used": false
-}
-```
+### 3. Optimizing for Different Document Sizes
 
-#### `POST /send-email`
+Meeting transcripts vary dramatically in size - from brief stand-ups to day-long workshops. Our processing pipeline needed to handle both extremes efficiently:
+- For smaller documents: Single-pass processing for coherent analysis
+- For larger documents: Intelligent chunking with context preservation
+- Memory-efficient processing to avoid OOM errors
+- Caching system to avoid reprocessing similar content
 
-Send meeting analysis results via email:
+### 4. Cross-Model Consistency
 
-```json
-{
-  "to": "recipient@example.com",
-  "subject": "Meeting Analysis Results",
-  "content": {
-    "summary": ["Summary point 1", "Summary point 2"],
-    "decisions": ["Decision 1", "Decision 2"],
-    "action_items": ["Action item 1", "Action item 2"],
-    "metadata": {
-      "model": "mistral",
-      "processing_time": 1.25,
-      "fallback_used": false
-    }
-  }
-}
-```
+Ensuring consistent output quality across different LLM models (from small local models to powerful cloud APIs) required careful prompt engineering:
+- Model-specific prompt templates optimized for each architecture
+- Explicit formatting instructions to guide output structure
+- Post-processing normalization to standardize outputs
+- Quality thresholds to trigger fallback mechanisms when needed
 
-#### `DELETE /cache`
+## 🔮 Future Directions
 
-Clear all cached analysis results:
-
-Response:
-```json
-{
-  "success": true,
-  "message": "Successfully cleared 42 cache files",
-  "timestamp": 1689432156.789
-}
-```
-
-#### `GET /models`
-
-List available Ollama models.
-
-#### `GET /health`
-
-Check API and Ollama health status.
-
-## 🔍 Troubleshooting
-
-### Common Issues
-
-1. **Timeout Errors**: 
-   - Increase the timeout value in `scripts/extract_meeting_info.py`
-   - Try a smaller model like "phi"
-   - Reduce the transcript size
-
-2. **Memory Issues**:
-   - Close other applications before running
-   - Use a smaller model
-   - Process transcripts in smaller chunks
-
-3. **Model Not Found**:
-   - Ensure Ollama is running: `ollama list`
-   - Pull the required model: `ollama pull mistral`
-
-4. **OpenAI API Issues**:
-   - Check your API key is correct
-   - Verify you have sufficient API credits
-   - Check your network connection
-
-## 🤝 Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+- **Meeting Comparison**: Analyze trends across multiple meetings over time
+- **Voice Recognition**: Direct audio-to-summary pipeline
+- **Participant Analysis**: Track speaker contributions and engagement
+- **Integration with Meeting Platforms**: Direct plugins for Zoom, Teams, etc.
+- **Custom Domain Adaptation**: Fine-tuning for specific industries or meeting types
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License - see the LICENSE file for details.
 
-## 🙏 Acknowledgements
+## 🙏 Acknowledgments
 
-- [Ollama](https://ollama.com/) for local LLM processing
-- [OpenAI](https://openai.com/) for cloud AI APIs
-- [FastAPI](https://fastapi.tiangolo.com/) for the API framework
-- [React](https://reactjs.org/) for the frontend framework
-- [Material-UI](https://mui.com/) for UI components
-- [spaCy](https://spacy.io/) for NLP processing
+- The Ollama team for making local LLMs accessible
+- FastAPI and React communities for excellent frameworks
+- Contributors who have helped improve this tool

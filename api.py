@@ -75,6 +75,7 @@ class TranscriptRequest(BaseModel):
     llm_type: str = Field(default="ollama", description="LLM type to use (ollama, openai, lmstudio, rule-based)")
     api_url: Optional[str] = Field(default=None, description="API URL for OpenAI-compatible APIs")
     api_key: Optional[str] = Field(default=None, description="API key for OpenAI-compatible APIs")
+    disable_chunking: bool = Field(default=True, description="Process the entire transcript as a single chunk (default: True)")
 
 class MeetingItem(BaseModel):
     summary: List[str] = Field(default_factory=list, description="List of summary points")
@@ -362,9 +363,13 @@ async def analyze_transcript(request: TranscriptRequest):
                 fallback_used=cached_result["fallback_used"]
             )
     
-    # Chunk the text if necessary
-    chunks = chunk_text(request.text, request.max_chunk_size)
-    logger.info(f"Split transcript into {len(chunks)} chunks")
+    # Chunk the text if necessary, unless chunking is disabled
+    if request.disable_chunking:
+        chunks = [request.text]
+        logger.info("Processing entire transcript as a single chunk (chunking disabled)")
+    else:
+        chunks = chunk_text(request.text, request.max_chunk_size)
+        logger.info(f"Split transcript into {len(chunks)} chunks")
     
     # Process chunks
     results = []
@@ -553,52 +558,135 @@ async def clear_cache():
         logger.error(f"Error clearing cache: {e}")
         raise HTTPException(status_code=500, detail=f"Error clearing cache: {str(e)}")
 
+def fix_malformed_json(json_str: str) -> str:
+    """
+    Attempt to fix common issues with malformed JSON returned by LLMs.
+    """
+    # Remove any text before the first opening brace
+    json_str = re.sub(r'^[^{]*', '', json_str)
+    
+    # Remove any text after the last closing brace
+    json_str = re.sub(r'[^}]*$', '', json_str)
+    
+    # Fix missing quotes around keys
+    json_str = re.sub(r'(\s*?)(\w+)(\s*?):', r'\1"\2"\3:', json_str)
+    
+    # Fix trailing commas in objects
+    json_str = re.sub(r',\s*}', '}', json_str)
+    
+    # Fix trailing commas in arrays
+    json_str = re.sub(r',\s*]', ']', json_str)
+    
+    # Fix missing quotes around string values
+    def fix_unquoted_strings(match):
+        key = match.group(1)
+        value = match.group(2)
+        if value.lower() in ['true', 'false', 'null'] or re.match(r'^-?\d+(\.\d+)?$', value):
+            # Don't quote booleans, null, or numbers
+            return f'"{key}": {value}'
+        else:
+            # Quote other values
+            return f'"{key}": "{value}"'
+    
+    json_str = re.sub(r'"(\w+)":\s*([^",\{\[\]\}\s][^",\{\[\]\}\s]*)', fix_unquoted_strings, json_str)
+    
+    # Replace nested JSON objects with string placeholders
+    json_str = re.sub(r'("summary":\s*){([^}]*)}', r'\1"NESTED_JSON"', json_str)
+    
+    return json_str
+
 def process_with_ollama(text: str, model: str) -> str:
-    """Process a chunk of text with Ollama API."""
-    try:
-        # Adjust timeout for phi model which takes longer
-        timeout = 180 if model == "phi" else 60
-        
-        # Prepare the prompt
-        prompt = f"""
-        You are an AI assistant that extracts information from meeting transcripts.
-        Analyze the following meeting transcript and extract:
-        1. A concise summary of the meeting (key points discussed)
-        2. All decisions made during the meeting
-        3. All action items/tasks assigned during the meeting, including who is responsible and any deadlines
+    """
+    Process text with Ollama LLM.
+    """
+    from scripts.extract_meeting_info import process_with_ollama as extract_process_with_ollama
+    
+    # Maximum number of retries
+    max_retries = 3
+    retry_delay = 2  # seconds
+    
+    for attempt in range(max_retries):
+        try:
+            # Use a much longer timeout for larger documents
+            response = extract_process_with_ollama(text, model)
+            
+            # Try to fix malformed JSON if present
+            if '{"summary":' in response and ('"decisions":' in response or '"action_items":' in response):
+                try:
+                    # Extract JSON-like content
+                    json_pattern = re.compile(r'```(?:json)?\s*(\{[\s\S]*?\})\s*```|(\{[\s\S]*?\})')
+                    json_matches = json_pattern.findall(response)
+                    
+                    if json_matches:
+                        for json_match in json_matches:
+                            # Take the non-empty match from the tuple
+                            json_str = json_match[0] if json_match[0] else json_match[1]
+                            if json_str and '{"summary":' in json_str:
+                                # Try to fix and parse the JSON
+                                fixed_json = fix_malformed_json(json_str)
+                                try:
+                                    # Test if it's valid JSON now
+                                    json.loads(fixed_json)
+                                    # If valid, replace the original JSON in the response
+                                    response = response.replace(json_str, fixed_json)
+                                except json.JSONDecodeError:
+                                    # If still invalid, keep the original
+                                    pass
+                except Exception as e:
+                    logger.warning(f"Error fixing JSON: {e}")
+            
+            return response
+            
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Ollama API request error (attempt {attempt+1}/{max_retries}): {e}")
+            
+            # If not the last attempt, retry
+            if attempt < max_retries - 1:
+                logger.info(f"Retrying in {retry_delay} seconds...")
+                time.sleep(retry_delay)
+                retry_delay *= 2  # Exponential backoff
+            else:
+                # If all retries failed, fall back to rule-based extraction
+                logger.warning("All Ollama API attempts failed, falling back to rule-based extraction")
+                # Use rule-based extraction as fallback
+                parsed = extract_meeting_info(text)
+                
+                # Format the summary as a paragraph
+                summary_paragraph = " ".join(parsed["summary"])
+                
+                return f"""## SUMMARY
+{summary_paragraph}
 
-        Format your response as follows:
-        ```json
-        {{
-            "summary": ["point 1", "point 2", ...],
-            "decisions": ["decision 1", "decision 2", ...],
-            "action_items": ["action item 1", "action item 2", ...]
-        }}
-        ```
+## DECISIONS
+{chr(10).join([f"- {item}" for item in parsed["decisions"]]) if parsed["decisions"] else "- None identified"}
 
-        If there are no decisions or action items, use an empty array [].
-        Be concise and focus only on extracting the requested information.
-        
-        TRANSCRIPT:
-        {text}
-        """
-        
-        # Call Ollama API
-        response = requests.post(
-            "http://localhost:11434/api/generate",
-            json={"model": model, "prompt": prompt, "stream": False},
-            timeout=timeout
-        )
-        
-        if response.status_code != 200:
-            logger.error(f"Ollama API error: {response.status_code} - {response.text}")
-            raise Exception(f"Ollama API error: {response.status_code}")
-        
-        result = response.json()
-        return result.get("response", "")
-    except Exception as e:
-        logger.error(f"Error calling Ollama API: {e}")
-        raise
+## ACTION ITEMS
+{chr(10).join([f"- {item}" for item in parsed["action_items"]]) if parsed["action_items"] else "- None identified"}"""
+        except Exception as e:
+            logger.error(f"Unexpected error with Ollama (attempt {attempt+1}/{max_retries}): {e}")
+            
+            # If not the last attempt, retry
+            if attempt < max_retries - 1:
+                logger.info(f"Retrying in {retry_delay} seconds...")
+                time.sleep(retry_delay)
+                retry_delay *= 2  # Exponential backoff
+            else:
+                # If all retries failed, fall back to rule-based extraction
+                logger.warning("All Ollama attempts failed, falling back to rule-based extraction")
+                # Use rule-based extraction as fallback
+                parsed = extract_meeting_info(text)
+                
+                # Format the summary as a paragraph
+                summary_paragraph = " ".join(parsed["summary"])
+                
+                return f"""## SUMMARY
+{summary_paragraph}
+
+## DECISIONS
+{chr(10).join([f"- {item}" for item in parsed["decisions"]]) if parsed["decisions"] else "- None identified"}
+
+## ACTION ITEMS
+{chr(10).join([f"- {item}" for item in parsed["action_items"]]) if parsed["action_items"] else "- None identified"}"""
 
 def process_with_openai_compatible(text: str, api_url: str, api_key: str, model: str = "gpt-3.5-turbo") -> str:
     """Process a chunk of text with OpenAI API or compatible endpoints."""
@@ -652,7 +740,7 @@ def process_with_openai_compatible(text: str, api_url: str, api_key: str, model:
             api_url,
             headers=headers,
             json=payload,
-            timeout=60  # 60 second timeout
+            timeout=270  # 270 second timeout
         )
         
         if response.status_code != 200:
@@ -715,7 +803,7 @@ def process_with_lmstudio(text: str, api_url: str) -> str:
         response = requests.post(
             api_url,
             json=payload,
-            timeout=60  # 60 second timeout
+            timeout=270  # 270 second timeout
         )
         
         if response.status_code != 200:

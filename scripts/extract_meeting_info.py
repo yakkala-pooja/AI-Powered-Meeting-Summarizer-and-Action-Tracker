@@ -200,30 +200,34 @@ def extract_meeting_info(transcript: str) -> Dict[str, List[str]]:
     
     # ACTION ITEMS EXTRACTION
     # ----------------------
-    # Enhanced patterns for action items
+    # Enhanced patterns for action items with stronger focus on TO-DOs
     action_patterns = [
-        # Future tense patterns
-        r'\bwill\s+\w+\b', r'\bshall\s+\w+\b', r'\bgoing\s+to\s+\w+\b',
+        # Direct to-do indicators
+        r'\bto-do\b', r'\btodo\b', r'\btask\b', r'\baction item\b', r'\baction point\b',
+        r'\btakeaway\b', r'\bnext step\b', r'\bfollow\s*-?\s*up\b',
         
-        # Task assignment patterns
-        r'\b(?:need|needs|needed)\s+to\s+\w+\b', r'\bmust\s+\w+\b', r'\bshould\s+\w+\b', 
-        r'\bhave\s+to\s+\w+\b', r'\brequired\s+to\s+\w+\b', r'\bresponsible\s+for\b',
-        r'\bassigned\s+to\b', r'\btask(?:ed)?\s+with\b',
+        # Assignment patterns
+        r'\b(?:assign|assigned|tasked|responsible)\b',
+        r'\bwill\s+(?:handle|take care of|be responsible for|work on|prepare|create|develop)\b',
+        r'\bneeds?\s+to\b', r'\bshould\b', r'\bmust\b', r'\bhave\s+to\b',
+        
+        # Future action patterns
+        r'\bwill\s+(?:send|email|call|contact|prepare|review|update|check|create|make|get|find|research)\b',
+        r'\bgoing\s+to\s+(?:send|email|call|contact|prepare|review|update|check|create|make|get|find|research)\b',
+        r'\bshall\s+(?:send|email|call|contact|prepare|review|update|check|create|make|get|find|research)\b',
         
         # Deadline patterns
-        r'\bby\s+(?:the\s+)?(?:end\s+of\s+)?(?:next|this)?\s*\w+day\b',
+        r'\bby\s+(?:tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b',
+        r'\bby\s+(?:next|this)\s+(?:week|month|quarter|year)\b',
         r'\bby\s+(?:the\s+)?(?:end\s+of\s+)?(?:january|february|march|april|may|june|july|august|september|october|november|december)\b',
-        r'\bby\s+(?:the\s+)?(?:end\s+of\s+)?q[1-4]\b',
-        r'\bdeadline\b', r'\bdue\s+(?:date|by)\b',
+        r'\bdue\s+(?:date|by)\b', r'\bdeadline\b', r'\btimeline\b',
         
-        # Follow-up patterns
-        r'\bfollow(?:\s*-\s*|\s+)up\b', r'\bcheck\s+(?:in|back)\b', r'\breview\b',
-        r'\bupdate\b', r'\bprovide\b', r'\bprepare\b', r'\bcreate\b', r'\bdevelop\b',
+        # Direct requests/commands (imperative verbs)
+        r'\b(?:please|kindly)\s+(?:send|prepare|review|update|check|create|make|get|find|research)\b',
         
-        # Specific action verbs in future context
-        r'\bschedule\b', r'\barrange\b', r'\borganize\b', r'\bcoordinate\b',
-        r'\bimplement\b', r'\bexecute\b', r'\bcomplete\b', r'\bfinalize\b',
-        r'\bsubmit\b', r'\bdeliver\b', r'\bpresent\b', r'\bshare\b'
+        # Ownership patterns with names
+        r'(?:[A-Z][a-z]+)\s+(?:will|should|needs to|is going to|has to|is responsible for)',
+        r'(?:[A-Z][a-z]+)\s+(?:is|are)\s+responsible\s+for\b',
     ]
     
     # Look for action items with enhanced patterns
@@ -249,7 +253,7 @@ def extract_meeting_info(transcript: str) -> Dict[str, List[str]]:
             elif sent not in result["action_items"]:
                 result["action_items"].append(sent)
     
-    # Look for explicit action item markers
+    # Look for explicit action item markers - these are very strong indicators
     action_markers = [
         r'action\s+item', r'next\s+step', r'to-do', r'todo', r'task', 
         r'action\s+point', r'takeaway', r'follow\s*-?\s*up'
@@ -282,6 +286,12 @@ def extract_meeting_info(transcript: str) -> Dict[str, List[str]]:
     for sent in sentences:
         schedule_match = schedule_pattern.search(sent)
         if schedule_match and sent not in result["action_items"]:
+            result["action_items"].append(sent)
+    
+    # Look for sentences with names followed by verbs indicating responsibility
+    name_responsibility_pattern = re.compile(r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+(?:will|should|needs to|is going to|has to|is responsible for)', re.IGNORECASE)
+    for sent in sentences:
+        if name_responsibility_pattern.search(sent) and sent not in result["action_items"]:
             result["action_items"].append(sent)
     
     # If we couldn't extract a summary, use a smarter fallback
@@ -347,14 +357,18 @@ def process_single_transcript(args):
     elif llm_type == "rule-based":
         # Use rule-based extraction as fallback
         parsed = extract_meeting_info(transcript)
+        
+        # Format the summary as a paragraph
+        summary_paragraph = " ".join(parsed["summary"])
+        
         raw_response = f"""## SUMMARY
-{chr(10).join([f"- {item}" for item in parsed["summary"]])}
+{summary_paragraph}
 
 ## DECISIONS
-{chr(10).join([f"- {item}" for item in parsed["decisions"]]) if parsed["decisions"] else "None identified"}
+{chr(10).join([f"- {item}" for item in parsed["decisions"]]) if parsed["decisions"] else "- None identified"}
 
 ## ACTION ITEMS
-{chr(10).join([f"- {item}" for item in parsed["action_items"]]) if parsed["action_items"] else "None identified"}"""
+{chr(10).join([f"- {item}" for item in parsed["action_items"]]) if parsed["action_items"] else "- None identified"}"""
         return row_id, transcript, parsed, raw_response
     else:
         response = f"Error: Unknown LLM type {llm_type}"
@@ -435,10 +449,11 @@ def process_transcripts(df: pd.DataFrame,
                        api_key: Optional[str] = None,
                        max_workers: int = 2,
                        chunk_size: int = 10,
+                       use_chunking: bool = False,
                        output_path: str = 'results/meeting_extractions.csv') -> pd.DataFrame:
     """
-    Process transcripts in chunks with LLM-based extraction.
-    Results are written to disk after each chunk to minimize memory usage.
+    Process transcripts with LLM-based extraction.
+    Results are written to disk after each chunk to minimize memory usage if chunking is enabled.
     """
     # Calculate total valid transcripts for progress bar
     total_valid = sum(1 for _, row in df.iterrows() 
@@ -446,111 +461,173 @@ def process_transcripts(df: pd.DataFrame,
     
     logger.info(f"Total transcripts to process: {len(df)}")
     logger.info(f"Valid transcripts to process: {total_valid}")
-    logger.info(f"Processing in chunks of {chunk_size} with {max_workers} workers")
     logger.info(f"Using LLM type: {llm_type}, Model: {model_name}")
     
-    # Create temporary directory for chunk results
-    temp_dir = tempfile.mkdtemp(prefix="transcript_processing_")
-    chunk_files = []
-    chunk_count = 0
-    total_processed = 0
-    
-    try:
-        # Process in chunks with a single progress bar
-        with tqdm(total=total_valid, desc="Processing transcripts") as pbar:
-            for chunk_df in chunk_dataframe(df, chunk_size):
-                chunk_count += 1
-                logger.info(f"Processing chunk {chunk_count} with {len(chunk_df)} transcripts")
-                
-                # Process chunk
-                chunk_results_df = process_chunk_with_progress(
-                    chunk_df,
-                    transcript_col,
-                    llm_type,
-                    model_name,
-                    api_url,
-                    api_key,
-                    max_workers,
-                    pbar
-                )
-                
-                # Save chunk results to temporary file if we have results
-                if not chunk_results_df.empty:
-                    chunk_file = os.path.join(temp_dir, f"chunk_{chunk_count}.csv")
-                    chunk_results_df.to_csv(chunk_file, index=False)
-                    chunk_files.append(chunk_file)
-                
-                # Update statistics
-                total_processed += len(chunk_results_df)
-                logger.info(f"Completed chunk {chunk_count}. Processed {len(chunk_results_df)} transcripts")
-                
-                # Clear memory
-                del chunk_results_df
+    if use_chunking:
+        logger.info(f"Processing in chunks of {chunk_size} with {max_workers} workers")
+        # Create temporary directory for chunk results
+        temp_dir = tempfile.mkdtemp(prefix="transcript_processing_")
+        chunk_files = []
+        chunk_count = 0
+        total_processed = 0
         
-        # Log processing statistics
-        logger.info("\nProcessing Statistics:")
-        logger.info(f"Total input transcripts: {len(df)}")
-        logger.info(f"Total processed transcripts: {total_processed}")
-        logger.info(f"Total chunks processed: {chunk_count}")
-        
-        if total_processed < total_valid:
-            logger.warning(f"Warning: {total_valid - total_processed} valid transcripts were not processed!")
-        
-        # Combine results efficiently with low memory usage
-        logger.info("Combining chunk results...")
-        
-        # Check if any results were processed
-        if not chunk_files:
-            logger.error("No results were processed!")
-            # Create an empty output file with headers
-            empty_df = pd.DataFrame(columns=[
-                'transcript_id', 'original_text', 'summary', 'decisions', 
-                'action_items', 'raw_response', 'summary_text', 
-                'decisions_text', 'action_items_text'
-            ])
+        try:
+            # Process in chunks with a single progress bar
+            with tqdm(total=total_valid, desc="Processing transcripts") as pbar:
+                for chunk_df in chunk_dataframe(df, chunk_size):
+                    chunk_count += 1
+                    logger.info(f"Processing chunk {chunk_count} with {len(chunk_df)} transcripts")
+                    
+                    # Process chunk
+                    chunk_results_df = process_chunk_with_progress(
+                        chunk_df,
+                        transcript_col,
+                        llm_type,
+                        model_name,
+                        api_url,
+                        api_key,
+                        max_workers,
+                        pbar
+                    )
+                    
+                    # Save chunk results to temporary file if we have results
+                    if not chunk_results_df.empty:
+                        chunk_file = os.path.join(temp_dir, f"chunk_{chunk_count}.csv")
+                        chunk_results_df.to_csv(chunk_file, index=False)
+                        chunk_files.append(chunk_file)
+                    
+                    # Update statistics
+                    total_processed += len(chunk_results_df)
+                    logger.info(f"Completed chunk {chunk_count}. Processed {len(chunk_results_df)} transcripts")
+                    
+                    # Clear memory
+                    del chunk_results_df
+            
+            # Log processing statistics
+            logger.info("\nProcessing Statistics:")
+            logger.info(f"Total input transcripts: {len(df)}")
+            logger.info(f"Total processed transcripts: {total_processed}")
+            logger.info(f"Total chunks processed: {chunk_count}")
+            
+            if total_processed < total_valid:
+                logger.warning(f"Warning: {total_valid - total_processed} valid transcripts were not processed!")
+            
+            # Combine results efficiently with low memory usage
+            logger.info("Combining chunk results...")
+            
+            # Check if any results were processed
+            if not chunk_files:
+                logger.error("No results were processed!")
+                # Create an empty output file with headers
+                empty_df = pd.DataFrame(columns=[
+                    'transcript_id', 'original_text', 'summary', 'decisions', 
+                    'action_items', 'raw_response', 'summary_text', 
+                    'decisions_text', 'action_items_text'
+                ])
+                
+                # Ensure output directory exists
+                output_dir = os.path.dirname(output_path)
+                if output_dir:
+                    os.makedirs(output_dir, exist_ok=True)
+                    
+                # Write empty dataframe to output
+                empty_df.to_csv(output_path, index=False)
+                logger.info(f"Created empty output file at {output_path}")
+                return pd.DataFrame()
+            
+            # Initialize empty DataFrame for column names
+            results_df = pd.read_csv(chunk_files[0], nrows=0)
             
             # Ensure output directory exists
             output_dir = os.path.dirname(output_path)
             if output_dir:
                 os.makedirs(output_dir, exist_ok=True)
+            
+            # Write header to final output file
+            results_df.to_csv(output_path, index=False)
+            
+            # Append each chunk to the output file
+            for chunk_file in tqdm(chunk_files, desc="Combining results"):
+                chunk_df = pd.read_csv(chunk_file)
                 
-            # Write empty dataframe to output
-            empty_df.to_csv(output_path, index=False)
-            logger.info(f"Created empty output file at {output_path}")
-            return pd.DataFrame()
+                # Convert lists to strings for CSV storage
+                for col in ['summary', 'decisions', 'action_items']:
+                    chunk_df[f'{col}_text'] = chunk_df[col].apply(lambda x: '\n'.join([f"- {item}" for item in (eval(x) if isinstance(x, str) else x)]) if x and x != '[]' else "None identified")
+                
+                # Append to final file
+                chunk_df.to_csv(output_path, mode='a', header=False, index=False)
+                
+                # Clear memory
+                del chunk_df
+            
+            logger.info(f"Results saved to {output_path}")
+            return pd.DataFrame()  # Return empty DataFrame since results are on disk
+            
+        finally:
+            # Clean up temporary files
+            logger.info("Cleaning up temporary files...")
+            shutil.rmtree(temp_dir)
+    else:
+        # Process all transcripts in memory without chunking
+        logger.info(f"Processing all transcripts in memory with {max_workers} workers")
         
-        # Initialize empty DataFrame for column names
-        results_df = pd.read_csv(chunk_files[0], nrows=0)
+        # Filter valid transcripts
+        valid_rows = [(row[transcript_col], row.name) for _, row in df.iterrows() 
+                     if isinstance(row[transcript_col], str) and row[transcript_col].strip()]
+        
+        # Create processing arguments
+        process_args = [
+            (transcript, row_id, llm_type, model_name, api_url, api_key)
+            for transcript, row_id in valid_rows
+        ]
+        
+        results = []
+        
+        # Process in parallel with ThreadPoolExecutor
+        with tqdm(total=len(process_args), desc="Processing transcripts") as pbar:
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = []
+                for args in process_args:
+                    futures.append(executor.submit(process_single_transcript, args))
+                
+                # Process results as they complete
+                for future in as_completed(futures):
+                    try:
+                        row_id, transcript, parsed, response = future.result()
+                        result_row = {
+                            'transcript_id': row_id,
+                            'original_text': transcript,
+                            'summary': parsed['summary'],
+                            'decisions': parsed['decisions'],
+                            'action_items': parsed['action_items'],
+                            'raw_response': response
+                        }
+                        results.append(result_row)
+                        pbar.update(1)
+                    except Exception as e:
+                        logger.error(f"Error processing transcript: {e}")
+                        pbar.update(1)
+        
+        # Create DataFrame from results
+        results_df = pd.DataFrame(results)
+        
+        # Convert lists to strings for CSV storage
+        for col in ['summary', 'decisions', 'action_items']:
+            if col in results_df.columns:
+                results_df[f'{col}_text'] = results_df[col].apply(
+                    lambda x: '\n'.join([f"- {item}" for item in x]) if x else "None identified"
+                )
         
         # Ensure output directory exists
         output_dir = os.path.dirname(output_path)
         if output_dir:
             os.makedirs(output_dir, exist_ok=True)
         
-        # Write header to final output file
+        # Save results to CSV
         results_df.to_csv(output_path, index=False)
-        
-        # Append each chunk to the output file
-        for chunk_file in tqdm(chunk_files, desc="Combining results"):
-            chunk_df = pd.read_csv(chunk_file)
-            
-            # Convert lists to strings for CSV storage
-            for col in ['summary', 'decisions', 'action_items']:
-                chunk_df[f'{col}_text'] = chunk_df[col].apply(lambda x: '\n'.join([f"- {item}" for item in (eval(x) if isinstance(x, str) else x)]) if x and x != '[]' else "None identified")
-            
-            # Append to final file
-            chunk_df.to_csv(output_path, mode='a', header=False, index=False)
-            
-            # Clear memory
-            del chunk_df
-        
         logger.info(f"Results saved to {output_path}")
-        return pd.DataFrame()  # Return empty DataFrame since results are on disk
         
-    finally:
-        # Clean up temporary files
-        logger.info("Cleaning up temporary files...")
-        shutil.rmtree(temp_dir)
+        return results_df
 
 def check_ollama_available():
     """
@@ -567,7 +644,7 @@ def check_ollama_available():
                 return True
             else:
                 logger.warning("Ollama is installed but no models are available.")
-                logger.info("Please pull a model with: ollama pull mistral")
+                logger.info("Please pull a model with: ollama pull llama3.2")
                 return False
         else:
             logger.warning("Ollama is installed but returned an error.")
@@ -576,7 +653,7 @@ def check_ollama_available():
     except FileNotFoundError:
         logger.error("Ollama is not installed or not in PATH.")
         logger.info("Please install Ollama from https://ollama.com/download")
-        logger.info("After installation, pull a model with: ollama pull mistral")
+        logger.info("After installation, pull a model with: ollama pull llama3.2")
         return False
 
 def process_with_ollama(transcript: str, model: str = "mistral") -> str:
@@ -587,7 +664,7 @@ def process_with_ollama(transcript: str, model: str = "mistral") -> str:
     if model in ["tinyllama", "phi", "gemma:2b"]:
         prompt = f"""You are analyzing a meeting transcript to extract key information. Read the entire transcript carefully and provide:
 
-1. SUMMARY: Create a coherent 3-5 sentence summary of the ENTIRE transcript that captures the main topics discussed. This should be a unified summary, not disconnected points.
+1. SUMMARY: Create a coherent paragraph (3-5 sentences) summarizing the ENTIRE transcript that captures the main topics discussed. This should be a unified summary, not disconnected points.
 
 2. DECISIONS: List ALL formal decisions made during the meeting, including:
    - Approvals granted
@@ -604,66 +681,63 @@ def process_with_ollama(transcript: str, model: str = "mistral") -> str:
 
 Transcript: {transcript}
 
-Format your response using EXACTLY this structure with clear section separation:
+Format your response as a JSON object with the following structure:
 
-## SUMMARY
-A coherent paragraph summarizing the entire transcript in 3-5 sentences.
+```json
+{{
+  "summary": "A coherent paragraph summarizing the entire transcript in 3-5 sentences.",
+  "decisions": ["Decision 1", "Decision 2"],
+  "action_items": ["Person: Task by deadline", "Person: Task"]
+}}
+```
 
-## DECISIONS
-- Decision 1
-- Decision 2
-(If no clear decisions were made, write only "- None identified")
-
-## ACTION ITEMS
-- [Person Name]: [Specific task] by [deadline if mentioned]
-- Scheduled: [Meeting details] on [date] at [time]
-- Approval needed: [Document/item] by [deadline]
-(If no action items were identified, write only "- None identified")
+If there are no decisions or action items, use an empty array [].
+IMPORTANT: Do not nest JSON objects inside other JSON objects. Keep the structure flat.
 """
     else:
-        prompt = f"""You are an expert meeting analyst who extracts key information from meeting transcripts with precision and clarity. Analyze the following meeting transcript and extract exactly these three elements:
+        prompt = f"""You are an expert meeting analyst who extracts key information from meeting transcripts with precision and clarity. For the transcript provided, please extract the following in this specific order:
 
 1. SUMMARY:
-   * Create a coherent paragraph (3-5 sentences) summarizing the entire transcript
-   * Focus on substantive content, not procedural remarks
-   * Capture the essence of what was discussed in a unified way
-   * Ensure the summary flows logically and covers the main topics
+   * First, create a coherent paragraph (3-5 sentences) that summarizes the entire meeting transcript
+   * Focus on the most important topics and discussions, not procedural remarks
+   * Ensure the summary provides a complete overview of what was discussed
+   * Make the summary flow logically and cover all main points
 
-2. DECISIONS (all that apply):
-   * Extract any clear conclusions reached
-   * Include formal votes, agreements, or resolutions
-   * Note any approved actions, policies, or plans
-   * List each decision as a separate bullet point
+2. DECISIONS:
+   * List all clear decisions that were made during the meeting
+   * Include formal votes, agreements, resolutions, or conclusions reached
+   * Format each decision as a separate bullet point
+   * Be specific about what was decided, by whom, and any conditions
 
-3. ACTION ITEMS (all that apply):
-   * Create a TO-DO list format with clear ownership
-   * Include WHO is responsible, WHAT they need to do, and WHEN it's due
-   * Look for commitments, assignments, or follow-up tasks
-   * Include any scheduled meetings with dates/times
-   * Include any documents requiring approval with deadlines
-
-For each section, if no relevant information exists, write only "None identified".
+3. ACTION ITEMS:
+   * List ALL tasks, to-dos, and follow-up items mentioned in the meeting
+   * Pay special attention to phrases like "to-do", "action item", "next steps", "will do", "need to"
+   * Include WHO needs to do WHAT and by WHEN (if deadlines were mentioned)
+   * Format each action item as a separate bullet point with clear ownership
+   * Include any scheduled follow-up meetings with dates/times
+   * Be thorough - don't miss any tasks or responsibilities assigned during the meeting
 
 Transcript:
 ```
 {transcript}
 ```
 
-Format your response using EXACTLY this structure:
+Your response MUST be a valid JSON object with the following structure:
 
-## SUMMARY
-A coherent paragraph summarizing the entire transcript in 3-5 sentences, covering the main topics discussed.
+```json
+{{
+  "summary": "A coherent paragraph summarizing the entire transcript in 3-5 sentences.",
+  "decisions": ["Decision 1", "Decision 2", "Decision 3"],
+  "action_items": ["Person: Task by deadline", "Person: Task"]
+}}
+```
 
-## DECISIONS
-- [First decision made during the meeting]
-- [Additional decisions as needed]
-(If no clear decisions were made, write only "- None identified")
-
-## ACTION ITEMS
-- [Person name]: [Specific task] by [Deadline if mentioned]
-- Scheduled: [Meeting details] on [Date] at [Time]
-- Approval needed: [Item requiring approval] by [Deadline]
-(If no action items were identified, write only "- None identified")
+IMPORTANT FORMATTING RULES:
+1. The "summary" field must contain a string, not another JSON object
+2. The "decisions" and "action_items" fields must contain arrays of strings, not nested objects
+3. Do not nest JSON objects inside other JSON objects
+4. If there are no decisions or action items, use an empty array []
+5. Do not include any text before or after the JSON object
 """
 
     # Maximum number of retries
@@ -681,10 +755,11 @@ A coherent paragraph summarizing the entire transcript in 3-5 sentences, coverin
                     "stream": False,
                     "options": {
                         "temperature": 0.1,
-                        "num_predict": 1000
+                        "num_predict": 1000,
+                        "num_ctx": 8192  # Increase context window
                     }
                 },
-                timeout=180  # Increased timeout to 3 minutes
+                timeout=300  # Increased timeout to 5 minutes
             )
             
             if response.status_code == 200:
@@ -704,14 +779,18 @@ A coherent paragraph summarizing the entire transcript in 3-5 sentences, coverin
                     # If all retries failed, fall back to rule-based extraction
                     logger.warning("All API attempts failed, falling back to rule-based extraction")
                     rule_based_parsed = extract_meeting_info(transcript)
+                    
+                    # Format the summary as a paragraph
+                    summary_paragraph = " ".join(rule_based_parsed["summary"])
+                    
                     return f"""## SUMMARY
-{chr(10).join([f"- {item}" for item in rule_based_parsed["summary"]])}
+{summary_paragraph}
 
 ## DECISIONS
-{chr(10).join([f"- {item}" for item in rule_based_parsed["decisions"]]) if rule_based_parsed["decisions"] else "None identified"}
+{chr(10).join([f"- {item}" for item in rule_based_parsed["decisions"]]) if rule_based_parsed["decisions"] else "- None identified"}
 
 ## ACTION ITEMS
-{chr(10).join([f"- {item}" for item in rule_based_parsed["action_items"]]) if rule_based_parsed["action_items"] else "None identified"}"""
+{chr(10).join([f"- {item}" for item in rule_based_parsed["action_items"]]) if rule_based_parsed["action_items"] else "- None identified"}"""
         
         except requests.exceptions.RequestException as e:
             logger.error(f"Request error: {e}")
@@ -725,57 +804,59 @@ A coherent paragraph summarizing the entire transcript in 3-5 sentences, coverin
                 # If all retries failed, fall back to rule-based extraction
                 logger.warning("All API attempts failed, falling back to rule-based extraction")
                 rule_based_parsed = extract_meeting_info(transcript)
+                
+                # Format the summary as a paragraph
+                summary_paragraph = " ".join(rule_based_parsed["summary"])
+                
                 return f"""## SUMMARY
-{chr(10).join([f"- {item}" for item in rule_based_parsed["summary"]])}
+{summary_paragraph}
 
 ## DECISIONS
-{chr(10).join([f"- {item}" for item in rule_based_parsed["decisions"]]) if rule_based_parsed["decisions"] else "None identified"}
+{chr(10).join([f"- {item}" for item in rule_based_parsed["decisions"]]) if rule_based_parsed["decisions"] else "- None identified"}
 
 ## ACTION ITEMS
-{chr(10).join([f"- {item}" for item in rule_based_parsed["action_items"]]) if rule_based_parsed["action_items"] else "None identified"}"""
+{chr(10).join([f"- {item}" for item in rule_based_parsed["action_items"]]) if rule_based_parsed["action_items"] else "- None identified"}"""
 
 def process_with_openai_compatible(transcript: str, api_url: str, api_key: Optional[str] = None) -> str:
     """
     Process transcript with OpenAI-compatible API.
     """
-    prompt = f"""You are an expert meeting analyst who extracts key information from meeting transcripts with precision and clarity. Analyze the following meeting transcript and extract exactly these three elements:
+    prompt = f"""You are an expert meeting analyst who extracts key information from meeting transcripts with precision and clarity. For the transcript provided, please extract the following in this specific order:
 
-1. SUMMARY (3-5 bullet points):
-   * Identify the main topics discussed
-   * Focus on substantive content, not procedural remarks
-   * Capture the essence of what was discussed, not just who spoke
+1. SUMMARY:
+   * First, create a coherent paragraph (3-5 sentences) that summarizes the entire meeting transcript
+   * Focus on the most important topics and discussions, not procedural remarks
+   * Ensure the summary provides a complete overview of what was discussed
+   * Make the summary flow logically and cover all main points
 
-2. DECISIONS (all that apply):
-   * Extract any clear conclusions reached
-   * Include formal votes, agreements, or resolutions
-   * Note any approved actions, policies, or plans
+2. DECISIONS:
+   * List all clear decisions that were made during the meeting
+   * Include formal votes, agreements, resolutions, or conclusions reached
+   * Format each decision as a separate bullet point
+   * Be specific about what was decided, by whom, and any conditions
 
-3. ACTION ITEMS (all that apply):
-   * Identify specific tasks assigned to people
-   * Include WHO is responsible, WHAT they need to do, and WHEN it's due
-   * Look for commitments, assignments, or follow-up tasks
-
-For each section, if no relevant information exists, write "None identified".
+3. ACTION ITEMS:
+   * List all tasks that were assigned to specific people
+   * Include WHO needs to do WHAT and by WHEN (if deadlines were mentioned)
+   * Format each action item as a separate bullet point with clear ownership
+   * Include any scheduled follow-up meetings with dates/times
 
 Transcript:
 ```
 {transcript}
 ```
 
-Format your response using EXACTLY this structure:
+Your response MUST be a valid JSON object with the following structure:
 
-## SUMMARY
-- [First substantive point from the discussion]
-- [Second substantive point from the discussion]
-- [Additional substantive points as needed]
+```json
+{{
+  "summary": "A coherent paragraph summarizing the entire transcript in 3-5 sentences.",
+  "decisions": ["Decision 1", "Decision 2", "Decision 3"],
+  "action_items": ["Person: Task by deadline", "Person: Task"]
+}}
+```
 
-## DECISIONS
-- [First decision made during the meeting]
-- [Additional decisions as needed]
-
-## ACTION ITEMS
-- [Person name]: [Specific task] by [Deadline if mentioned]
-- [Additional action items as needed]
+If there are no decisions or action items, use an empty array []. Do not include any text before or after the JSON object.
 """
 
     headers = {"Content-Type": "application/json"}
@@ -833,79 +914,170 @@ def parse_response(response: str) -> Dict[str, List[str]]:
         text = re.sub(r'\s+', ' ', text).strip()
         return text
     
-    # First try to extract using the expected format
-    # Extract summary section
-    summary_match = re.search(r"##\s*SUMMARY\s*([\s\S]*?)(?=##|$)", response)
-    if summary_match:
-        summary_text = summary_match.group(1).strip()
-        
-        # First check if there are bullet points (old format)
-        summary_points = re.findall(r"-\s*(.*?)(?=\n-|\n\n|$)", summary_text)
-        
-        if summary_points:
-            # Process each summary point (bullet format)
-            for point in summary_points:
-                if not point.strip():
-                    continue
-                    
-                point = point.strip()
+    # First try to extract JSON if present
+    json_pattern = re.compile(r'```(?:json)?\s*(\{[\s\S]*?\})\s*```|(\{[\s\S]*?\})')
+    json_matches = json_pattern.findall(response)
+    
+    for json_match in json_matches:
+        # Take the non-empty match from the tuple
+        json_str = json_match[0] if json_match[0] else json_match[1]
+        if json_str:
+            try:
+                # Fix common JSON formatting issues
+                json_str = re.sub(r',\s*}', '}', json_str)  # Remove trailing commas
+                json_str = re.sub(r',\s*]', ']', json_str)  # Remove trailing commas in arrays
                 
-                # Special handling for phi model output format
-                # Check if the point contains "SUMMARY:" or "DECISIONS:" prefixes
-                if point.startswith("SUMMARY:"):
-                    cleaned = clean_text(point.replace("SUMMARY:", "", 1))
-                    if cleaned and len(cleaned) > 5 and not all(c in '[]' for c in cleaned) and "bullet point" not in cleaned.lower():
-                        result["summary"].append(cleaned)
-                elif point.startswith("DECISIONS:"):
-                    cleaned = clean_text(point.replace("DECISIONS:", "", 1))
+                # Parse the JSON
+                json_data = json.loads(json_str)
+                
+                # Extract summary
+                if "summary" in json_data:
+                    summary_data = json_data["summary"]
+                    if isinstance(summary_data, str):
+                        # If summary is a string, add it directly
+                        if summary_data.strip() and not summary_data.lower().startswith("none"):
+                            result["summary"].append(clean_text(summary_data))
+                    elif isinstance(summary_data, list):
+                        # If summary is a list, add each item
+                        for item in summary_data:
+                            if isinstance(item, str) and item.strip() and not item.lower().startswith("none"):
+                                result["summary"].append(clean_text(item))
+                
+                # Extract decisions
+                if "decisions" in json_data:
+                    decisions_data = json_data["decisions"]
+                    if isinstance(decisions_data, list):
+                        for item in decisions_data:
+                            if isinstance(item, str) and item.strip() and not item.lower().startswith("none"):
+                                result["decisions"].append(clean_text(item))
+                
+                # Extract action items
+                if "action_items" in json_data:
+                    action_items_data = json_data["action_items"]
+                    if isinstance(action_items_data, list):
+                        for item in action_items_data:
+                            if isinstance(item, str) and item.strip() and not item.lower().startswith("none"):
+                                result["action_items"].append(clean_text(item))
+                
+                # If we successfully extracted data from JSON, don't continue parsing
+                if any(len(v) > 0 for v in result.values()):
+                    break
+                
+            except json.JSONDecodeError as e:
+                logger.warning(f"Failed to parse JSON: {e}")
+    
+    # If JSON parsing failed or didn't yield results, try the markdown format
+    if not any(len(v) > 0 for v in result.values()):
+        # Extract summary section
+        summary_match = re.search(r"##\s*SUMMARY\s*([\s\S]*?)(?=##|$)", response)
+        if summary_match:
+            summary_text = summary_match.group(1).strip()
+            
+            # Check if there are bullet points (old format)
+            summary_points = re.findall(r"-\s*(.*?)(?=\n-|\n\n|$)", summary_text)
+            
+            if summary_points:
+                # Process each summary point (bullet format)
+                for point in summary_points:
+                    if not point.strip():
+                        continue
+                        
+                    point = point.strip()
+                    
+                    # Special handling for phi model output format
+                    # Check if the point contains "SUMMARY:" or "DECISIONS:" prefixes
+                    if point.startswith("SUMMARY:"):
+                        cleaned = clean_text(point.replace("SUMMARY:", "", 1))
+                        if cleaned and len(cleaned) > 5 and not all(c in '[]' for c in cleaned) and "bullet point" not in cleaned.lower():
+                            result["summary"].append(cleaned)
+                    elif point.startswith("DECISIONS:"):
+                        cleaned = clean_text(point.replace("DECISIONS:", "", 1))
+                        if cleaned and len(cleaned) > 5 and not all(c in '[]' for c in cleaned) and "decision" not in cleaned.lower():
+                            result["decisions"].append(cleaned)
+                    else:
+                        cleaned = clean_text(point)
+                        if cleaned and len(cleaned) > 5 and not all(c in '[]' for c in cleaned) and "bullet point" not in cleaned.lower():
+                            result["summary"].append(cleaned)
+            else:
+                # Process as paragraph format (new format)
+                paragraph = summary_text.strip()
+                if paragraph and not paragraph.lower().startswith("none identified"):
+                    # Remove placeholders and clean the paragraph
+                    cleaned_paragraph = clean_text(paragraph)
+                    
+                    if cleaned_paragraph and len(cleaned_paragraph) > 15:
+                        # First try to keep the paragraph as a single unit if it's not too long
+                        if len(cleaned_paragraph) <= 500:
+                            result["summary"].append(cleaned_paragraph)
+                        else:
+                            # For longer paragraphs, split into sentences for better display
+                            sentences = re.split(r'(?<=[.!?])\s+', cleaned_paragraph)
+                            for sentence in sentences:
+                                if sentence.strip() and len(sentence.strip()) > 10:
+                                    result["summary"].append(sentence.strip())
+        
+        # Extract decisions section
+        decisions_match = re.search(r"##\s*DECISIONS\s*([\s\S]*?)(?=##|$)", response)
+        if decisions_match:
+            decisions_text = decisions_match.group(1).strip()
+            
+            # Check if there's a "None identified" marker
+            if "none identified" in decisions_text.lower():
+                # No decisions found
+                pass
+            else:
+                # Extract bullet points
+                decision_points = re.findall(r"-\s*(.*?)(?=\n-|\n\n|$)", decisions_text)
+                for point in decision_points:
+                    cleaned = clean_text(point.strip())
                     if cleaned and len(cleaned) > 5 and not all(c in '[]' for c in cleaned) and "decision" not in cleaned.lower():
                         result["decisions"].append(cleaned)
-                else:
-                    cleaned = clean_text(point)
-                    if cleaned and len(cleaned) > 5 and not all(c in '[]' for c in cleaned) and "bullet point" not in cleaned.lower():
-                        result["summary"].append(cleaned)
-        else:
-            # Process as paragraph format (new format)
-            # Split into sentences
-            paragraph = summary_text.strip()
-            if paragraph and not paragraph.lower().startswith("none identified"):
-                # Remove placeholders
-                paragraph = re.sub(r'\[.*?\]', '', paragraph)
-                
-                # Clean the paragraph
-                cleaned_paragraph = clean_text(paragraph)
-                
-                if cleaned_paragraph and len(cleaned_paragraph) > 15:
-                    # Split into sentences for better display
-                    sentences = re.split(r'(?<=[.!?])\s+', cleaned_paragraph)
-                    for sentence in sentences:
-                        if sentence.strip() and len(sentence.strip()) > 10:
-                            result["summary"].append(sentence.strip())
-    
-    # Extract decisions section
-    decisions_match = re.search(r"##\s*DECISIONS\s*([\s\S]*?)(?=##|$)", response)
-    if decisions_match:
-        decisions_text = decisions_match.group(1).strip()
-        # Extract bullet points
-        decision_points = re.findall(r"-\s*(.*?)(?=\n-|\n\n|$)", decisions_text)
-        for point in decision_points:
-            cleaned = clean_text(point.strip())
-            if cleaned and "None identified" not in cleaned and len(cleaned) > 5 and not all(c in '[]' for c in cleaned) and "decision" not in cleaned.lower():
-                result["decisions"].append(cleaned)
-    
-    # Extract action items section
-    actions_match = re.search(r"##\s*ACTION\s*ITEMS\s*([\s\S]*?)(?=$)", response)
-    if actions_match:
-        actions_text = actions_match.group(1).strip()
-        # Extract bullet points
-        action_points = re.findall(r"-\s*(.*?)(?=\n-|\n\n|$)", actions_text)
-        for point in action_points:
-            cleaned = clean_text(point.strip())
-            if cleaned and "None identified" not in cleaned and len(cleaned) > 5 and not all(c in '[]' for c in cleaned) and not "Person]" in cleaned:
-                result["action_items"].append(cleaned)
+        
+        # Extract action items section
+        actions_match = re.search(r"##\s*ACTION\s*ITEMS\s*([\s\S]*?)(?=$)", response)
+        if actions_match:
+            actions_text = actions_match.group(1).strip()
+            
+            # Check if there's a "None identified" marker
+            if "none identified" in actions_text.lower():
+                # No action items found
+                pass
+            else:
+                # Extract bullet points
+                action_points = re.findall(r"-\s*(.*?)(?=\n-|\n\n|$)", actions_text)
+                for point in action_points:
+                    cleaned = clean_text(point.strip())
+                    if cleaned and len(cleaned) > 5 and not all(c in '[]' for c in cleaned) and not "Person]" in cleaned:
+                        result["action_items"].append(cleaned)
     
     # If we couldn't extract anything using the expected format, try a fallback approach
-    if not any(result.values()):
+    if not any(len(v) > 0 for v in result.values()):
+        # Try to extract any JSON-like structures that might be malformed
+        json_like_pattern = re.compile(r'{\s*"summary":[^}]*"decisions":[^}]*"action_items":[^}]*}')
+        json_like_match = json_like_pattern.search(response)
+        
+        if json_like_match:
+            try:
+                # Try to clean up and fix the JSON-like structure
+                json_like_text = json_like_match.group(0)
+                # Replace any nested JSON with placeholder
+                json_like_text = re.sub(r'{\s*"summary":[^{]*}', '{"summary":"NESTED_JSON"}', json_like_text)
+                # Add quotes around unquoted keys
+                json_like_text = re.sub(r'(\w+):', r'"\1":', json_like_text)
+                # Fix common issues
+                json_like_text = json_like_text.replace('",]', '"]')
+                json_like_text = json_like_text.replace(',}', '}')
+                
+                # Try to parse it
+                fixed_json = json.loads(json_like_text)
+                
+                # Extract data if possible
+                if "summary" in fixed_json and isinstance(fixed_json["summary"], str):
+                    result["summary"].append(clean_text(fixed_json["summary"]))
+            except:
+                # If that fails, just continue to other fallbacks
+                pass
+        
         # Try to find any bullet points in the response
         all_bullet_points = re.findall(r"-\s*(.*?)(?=\n-|\n\n|$)", response)
         
@@ -962,44 +1134,42 @@ def process_with_lmstudio(transcript: str, api_url: str = "http://localhost:1234
     """
     Process transcript with LM Studio local API.
     """
-    prompt = f"""You are an expert meeting analyst who extracts key information from meeting transcripts with precision and clarity. Analyze the following meeting transcript and extract exactly these three elements:
+    prompt = f"""You are an expert meeting analyst who extracts key information from meeting transcripts with precision and clarity. For the transcript provided, please extract the following in this specific order:
 
-1. SUMMARY (3-5 bullet points):
-   * Identify the main topics discussed
-   * Focus on substantive content, not procedural remarks
-   * Capture the essence of what was discussed, not just who spoke
+1. SUMMARY:
+   * First, create a coherent paragraph (3-5 sentences) that summarizes the entire meeting transcript
+   * Focus on the most important topics and discussions, not procedural remarks
+   * Ensure the summary provides a complete overview of what was discussed
+   * Make the summary flow logically and cover all main points
 
-2. DECISIONS (all that apply):
-   * Extract any clear conclusions reached
-   * Include formal votes, agreements, or resolutions
-   * Note any approved actions, policies, or plans
+2. DECISIONS:
+   * List all clear decisions that were made during the meeting
+   * Include formal votes, agreements, resolutions, or conclusions reached
+   * Format each decision as a separate bullet point
+   * Be specific about what was decided, by whom, and any conditions
 
-3. ACTION ITEMS (all that apply):
-   * Identify specific tasks assigned to people
-   * Include WHO is responsible, WHAT they need to do, and WHEN it's due
-   * Look for commitments, assignments, or follow-up tasks
-
-For each section, if no relevant information exists, write "None identified".
+3. ACTION ITEMS:
+   * List all tasks that were assigned to specific people
+   * Include WHO needs to do WHAT and by WHEN (if deadlines were mentioned)
+   * Format each action item as a separate bullet point with clear ownership
+   * Include any scheduled follow-up meetings with dates/times
 
 Transcript:
 ```
 {transcript}
 ```
 
-Format your response using EXACTLY this structure:
+Your response MUST be a valid JSON object with the following structure:
 
-## SUMMARY
-- [First substantive point from the discussion]
-- [Second substantive point from the discussion]
-- [Additional substantive points as needed]
+```json
+{{
+  "summary": "A coherent paragraph summarizing the entire transcript in 3-5 sentences.",
+  "decisions": ["Decision 1", "Decision 2", "Decision 3"],
+  "action_items": ["Person: Task by deadline", "Person: Task"]
+}}
+```
 
-## DECISIONS
-- [First decision made during the meeting]
-- [Additional decisions as needed]
-
-## ACTION ITEMS
-- [Person name]: [Specific task] by [Deadline if mentioned]
-- [Additional action items as needed]
+If there are no decisions or action items, use an empty array []. Do not include any text before or after the JSON object.
 """
 
     headers = {"Content-Type": "application/json"}
@@ -1051,7 +1221,7 @@ def main():
                         help='Output CSV file with extracted information')
     parser.add_argument('--transcript_col', type=str, default='chunk_text', 
                         help='Name of column containing transcript text')
-    parser.add_argument('--model', type=str, default='mistral', 
+    parser.add_argument('--model', type=str, default='llama3.2', 
                         help='Ollama model to use (e.g., llama3.2, mistral, gemma)')
     parser.add_argument('--sample', type=int, default=None, 
                         help='Use a sample of chunks for faster processing')
@@ -1059,6 +1229,8 @@ def main():
                         help='Maximum number of parallel workers')
     parser.add_argument('--chunk_size', type=int, default=10,
                         help='Number of transcripts to process in each main chunk')
+    parser.add_argument('--use_chunking', action='store_true',
+                        help='Enable chunking for low-memory processing (default: False)')
     
     args = parser.parse_args()
     
@@ -1066,7 +1238,7 @@ def main():
     if not check_ollama_available():
         logger.error("Ollama is required for this script to run.")
         logger.info("Please install Ollama from https://ollama.com/download")
-        logger.info("After installation, pull a model with: ollama pull mistral")
+        logger.info("After installation, pull a model with: ollama pull llama3.2")
         return
     
     # Load data
@@ -1087,6 +1259,7 @@ def main():
         model_name=args.model,
         max_workers=args.max_workers,
         chunk_size=args.chunk_size,
+        use_chunking=args.use_chunking,
         output_path=args.output
     )
     
